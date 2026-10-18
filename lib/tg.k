@@ -545,3 +545,127 @@ tg_params_done(b) {
     tg_buf_add(b, "}");
     b[0];
 }
+
+// ===== HTTP =====
+// Транспорт: popen + curl. POST-тело — во временный файл tg_req<pid>,
+// ответ — в глобальный Buf-слот httpresp. Одинаково синхронно, порядок
+// вызовов сохраняется.
+
+extern popen
+extern pclose
+extern fopen
+extern fclose
+extern fwrite
+extern fgets
+extern remove
+extern strcpy
+extern getpid
+extern printf
+extern sleep
+
+httpresp[3];       // Buf-слот ответа
+fnamebuf[32];      // имя временного файла (256 байт)
+httpurl[64];       // копия URL вне scratch (512 байт)
+readbuf[64];       // приёмник fgets (512 байт)
+tg_http_last_ok;   // 1 — curl exit 0 и ответ получен
+tg_http_curlcode;  // код выхода curl последнего вызова
+
+tg_http_body() {
+    httpresp[0];
+}
+
+// tg_http_post(url, body*): POST тела body на url; возврат — 1 при curl exit 0
+tg_http_post(url, body) {
+    auto f;
+    auto n;
+    auto st;
+    auto ok;
+    sprintf(&fnamebuf, "tg_req%d", getpid());
+    tg_http_last_ok = 0;
+    tg_http_curlcode = 99;
+    f = fopen(&fnamebuf, "wb");
+    ok = 0;
+    if f != 0 {
+        n = strlen(body);
+        if n > 0 fwrite(body, 1, n, f);
+        fclose(f);
+        strcpy(&httpurl, url);
+        sprintf(tg_scratch(), "curl -s -m 35 -H \"Content-Type: application/json\" -d @%s '%s'", &fnamebuf, &httpurl);
+        f = popen(&scratchbuf, "r");
+        if f != 0 {
+            tg_buf_reset(&httpresp);
+            while fgets(&readbuf, 512, f) tg_buf_add(&httpresp, &readbuf);
+            st = pclose(f);
+            tg_http_curlcode = (st >> 8) & 255;
+            if tg_http_curlcode == 0 {
+                ok = 1;
+                tg_http_last_ok = 1;
+            }
+        }
+        remove(&fnamebuf);
+    }
+    ok;
+}
+
+// ===== API call =====
+
+// tg_default_on_error(bot, method, code, desc): дефолтный принтер ошибок
+tg_default_on_error(bot, method, code, desc) {
+    printf("[tg] %s error %d: %s\n", method, code, desc);
+    1;
+}
+
+// tg_call(bot, method, params*|0): вызов Bot API. params==0 → пустое тело.
+// 429 → on_error + sleep(retry_after), максимум 3 попытки. Возврат 1 — ok:true.
+tg_call(bot, method, params) {
+    auto attempt;
+    auto ok;
+    auto oe;
+    auto body;
+    auto code;
+    auto desc;
+    auto retry;
+    auto url;
+    attempt = 0;
+    ok = 0;
+    while attempt < 3 {
+        if params == 0 {
+            body = "";
+        } else {
+            body = params;
+        }
+        // NOTE: tg_scratch() вынесен в локальную: вложенный вызов в аргументах
+        // рядом с индексацией параметра (bot[i]) затирает вычисленные значения
+        url = tg_scratch();
+        sprintf(url, "%s/bot%s/%s", bot[1], bot[0], method);
+        tg_http_post(url, body);
+        if tg_http_last_ok {
+            if tg_get_bool(tg_http_body(), "ok") {
+                ok = 1;
+                attempt = 3;
+            } else {
+                code = tg_get_num(tg_http_body(), "error_code");
+                desc = tg_get_str(tg_http_body(), "description");
+                if desc == 0 desc = "no description";
+                oe = bot[7];
+                oe(bot, method, code, desc);
+                if code == 429 {
+                    retry = tg_get_num(tg_http_body(), "parameters.retry_after");
+                    if retry > 0 {
+                        sleep(retry);
+                    } else {
+                        sleep(1);
+                    }
+                    attempt = attempt + 1;
+                } else {
+                    attempt = 3;
+                }
+            }
+        } else {
+            oe = bot[7];
+            oe(bot, method, tg_http_curlcode, "transport error");
+            attempt = 3;
+        }
+    }
+    ok;
+}
