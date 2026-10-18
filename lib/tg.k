@@ -492,3 +492,56 @@ tg_count(resp, path) {
     }
     n;
 }
+
+// ===== Params =====
+// Билдер параметров запроса: Params = Buf-слот (0 ptr*, 1 len, 2 cap).
+// Жизнь результата — до следующего tg_params_reset того же слота.
+
+// tg_params_reset(b): сброс + opening brace
+tg_params_reset(b) {
+    tg_buf_reset(b);
+    tg_buf_add(b, "{");
+    1;
+}
+
+// tg_param_str(b, key, val): "key":"val" (оба через tg_json_escape) + ,
+tg_param_str(b, key, val) {
+    tg_buf_add(b, "\"");
+    tg_buf_add(b, tg_json_escape(key));
+    tg_buf_add(b, "\":\"");
+    tg_buf_add(b, tg_json_escape(val));
+    tg_buf_add(b, "\",");
+    1;
+}
+
+// tg_param_num(b, key, num): "key":число + ,
+tg_param_num(b, key, num) {
+    tg_buf_add(b, "\"");
+    tg_buf_add(b, tg_json_escape(key));
+    tg_buf_add(b, "\":");
+    tg_buf_addnum(b, num);
+    tg_buf_add(b, ",");
+    1;
+}
+
+// tg_param_json(b, key, json): "key":<сырой json> + , (reply_markup и т.п.)
+tg_param_json(b, key, json) {
+    tg_buf_add(b, "\"");
+    tg_buf_add(b, tg_json_escape(key));
+    tg_buf_add(b, "\":");
+    tg_buf_add(b, json);
+    tg_buf_add(b, ",");
+    1;
+}
+
+// tg_params_done(b): убрать последнюю запятую, закрыть скобку; возврат — тело
+tg_params_done(b) {
+    if b[1] > 0 {
+        if @8 *(b[0] + b[1] - 1) == 44 {
+            b[1] = b[1] - 1;
+            *(b[0] + b[1]) !8 0;
+        }
+    }
+    tg_buf_add(b, "}");
+    b[0];
+}
