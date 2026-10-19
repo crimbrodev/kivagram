@@ -86,11 +86,11 @@ tg_ex_str(key, val); tg_ex_num(key, n); tg_ex_json(key, json); tg_ex_raw(key, li
 
 **Files:** Modify `lib/tg.k` (эксклюзив), Create `tests/t_v3_core.k`
 
-- [ ] RED: `tests/t_v3_core.k` по контракту D (./build.sh tests/t_v3_core.k /tmp/w3_t → FAIL, записать вывод)
-- [ ] Реализация: tg_mpslot-слоты (после HTTP-блока), рефактор общего response-handler из tg_call в `tg_call_common(bot, method)` (retry-цикл 429 ×3, 409 → deleteWebhook, transport error → on_error), `tg_call_mp` = compose URL + popen curl -F + tg_call_common; `tg_http_get_file` (curl -o, сухой режим GET-композиция); extraslot + `tg_ex_*` + модификация `tg_params_done`
-- [ ] GREEN: PASS
-- [ ] Регрессия: все 22 существующих теста PASS (матрица `for t in tests/t_*.k`)
-- [ ] Пример `examples/bot.k` собирается
+- [x] RED: `tests/t_v3_core.k` по контракту D (./build.sh tests/t_v3_core.k /tmp/w3_t → FAIL, записать вывод)
+- [x] Реализация: tg_mpslot-слоты (после HTTP-блока), рефактор общего response-handler из tg_call в `tg_call_common(bot, method)` (retry-цикл 429 ×3, 409 → deleteWebhook, transport error → on_error), `tg_call_mp` = compose URL + popen curl -F + tg_call_common; `tg_http_get_file` (curl -o, сухой режим GET-композиция); extraslot + `tg_ex_*` + модификация `tg_params_done`
+- [x] GREEN: PASS
+- [x] Регрессия: все 22 существующих теста PASS (матрица `for t in tests/t_*.k`)
+- [x] Пример `examples/bot.k` собирается
 
 **Gate W3-0:** регрессия зелёная → оркестратор коммитит ядро одним коммитом и запускает W3-1..W3-6 параллельно.
 
@@ -178,11 +178,11 @@ Boosts (2): `tg_get_user_boosts(bot, chat_id, user_id)`, `tg_get_chat_boosts(bot
 ## W3-Int (Task 8): интеграция
 
 **Files:** Modify по необходимости (интероп), README.md, docs/superpowers/plans/... (галочки)
-- [ ] Полная матрица `for t in tests/t_*.k` → все PASS; фиксы интероп в файлах виновников
-- [ ] `examples/bot.k` собирается; webhook-смоук: собрать `examples/webhook_bot.k` (мини-пример: set_webhook + serve на 8443 с секретом, echo-хендлер) — сборка + `test -x`; живой прогон НЕ обязателен (нужен реальный токен/домен)
-- [ ] Проверка токена grep-паттерном
-- [ ] Коммиты по модулям (по одному на пару файлов, ядро уже закоммичено)
-- [ ] README: секции «multipart», «Webhook-режим», «Экзотические параметры (extras)» + обновить «Вне скоупа»
-- [ ] Финальный `git log`, чистый `git status`
+- [x] Полная матрица `for t in tests/t_*.k` → все PASS; фиксы интероп в файлах виновников
+- [x] `examples/bot.k` собирается; webhook-смоук: собрать `examples/webhook_bot.k` (мини-пример: set_webhook + serve на 8443 с секретом, echo-хендлер) — сборка + `test -x`; живой прогон НЕ обязателен (нужен реальный токен/домен)
+- [x] Проверка токена grep-паттерном
+- [x] Коммиты по модулям (по одному на пару файлов, ядро уже закоммичено)
+- [x] README: секции «multipart», «Webhook-режим», «Экзотические параметры (extras)» + обновить «Вне скоупа»
+- [x] Финальный `git log`, чистый `git status`
 
 **Self-review:** волна 3 GAP закрыта полностью (multipart, getFile+скачивание, sticker-загрузка, вебхук-набор + сервер, бизнес 12, подарки 6, сторис 4, игры 3, верификация 5, managed 4, boosts 2, passport, черновики, чеклисты, профиль-фильтры); экзотические параметры доступны во ВСЕХ обёртках через extras без ломки сигнатур; каждый новый файл имеет свой тест; ни одна задача не редактирует чужой файл.

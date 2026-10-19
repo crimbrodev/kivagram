@@ -163,8 +163,8 @@ ggram (MIT, TRIGON.IM) — вдохновитель дизайна API; kivagram
 текстовые методы, ответы на кнопки, сушка параметров, 429-ретраи,
 409 → `deleteWebhook`, «terminated by other getUpdates» → стоп.
 
-Вне скоупа: отправка файлов с диска (multipart — отдельная волна),
-webhooks, сессии/kv-хранилище, свои variadic.
+Вне скоупа: webhooks через reverse-proxy-сертификаты (letsencrypt и
+прочая инфраструктура), сессии/kv-хранилище, свои variadic.
 
 ## Модули v2 (волна 1)
 
@@ -195,6 +195,54 @@ JSON-объекты/массивы (`options`, `permissions`, `prices`, `command
 кавычек); всё, что не вошло в обёртку, — задокументировано в шапке
 модуля и вызывается через `tg_call` напрямую. Тесты — `tests/t_v2_*.k`
 (dry-run, `tg_composed`).
+
+## Модули v2 (волна 3)
+
+| Модуль | Содержимое |
+|---|---|
+| `lib/tg.k` (ядро) | multipart-транспорт (`tg_call_mp`, `tg_mf_str/num/file`), getFile+скачивание (`tg_get_file`, `tg_download_file`, `tg_http_get_file`), **extras-слот** (`tg_ex_*`), kind 11/12 (business/edited_business) |
+| `lib/tg_files.k` | файловые send*-file (с диска), media-group с `attach://`, uploadStickerFile, сторис с файлами |
+| `lib/tg_webhook.k` | `tg_set_webhook` (certificate — multipart), `tg_delete_webhook` |
+| `lib/tg_wbserve.k` | HTTP-сервер приёма апдейтов: `tg_webhook_serve(bot, port, secret)` + `tg_wb_open`/`tg_wb_step`/`tg_wb_parse`; секрет сверяется по `X-Telegram-Bot-Api-Secret-Token`, 200 до диспатча |
+| `lib/tg_business.k` | бизнес-аккаунт 12/12 |
+| `lib/tg_gifts.k` | подарки 6, сторис 4 (JSON), игры 3 |
+| `lib/tg_tail.k` | верификация, managed bot, boosts, passport, черновики, чеклисты, профиль-фильтры |
+
+### Загрузка файлов с диска
+
+```k
+tg_send_document_file(bot, chat_id, "/path/report.pdf", "отчёт"); // multipart
+p = tg_get_file(bot, file_id);        // file_path из ответа (слот ядра)
+tg_download_file(bot, p, "/tmp/x");   // GET /file/bot<token>/<path>
+```
+
+### Webhook-режим (вместо polling)
+
+```k
+bot = tg_bot("токен");
+tg_set_webhook(bot, "https://example.com/tg", "секрет");
+tg_webhook_serve(bot, 8443, "секрет");  // блокирует; остановка — tg_stop(bot)
+```
+
+Пример — `examples/webhook_bot.k`. Апдейты идут в ту же диспетчерную
+точку, что и polling; ответ 200 Telegram получает до обработки.
+
+### Экзотические параметры — extras-слот
+
+ЛЮБАЯ обёртка сливает содержимое extras-слота в тело запроса
+(съедается автоматически — применился к следующему вызову):
+
+```k
+tg_ex_raw("drop_pending_updates", "true");
+tg_delete_webhook(bot, 0);   // тело: {"drop_pending_updates":true}
+tg_ex_str("business_connection_id", "bc1");
+tg_send_text(ctx, "привет"); // business_connection_id ушёл в тело
+```
+
+`tg_ex_json` — для объектов/массивов, `tg_ex_num` — числа. Прямой
+`tg_call(bot, method, 0)` extras не читает — только через обёртки
+(они зовут `tg_params_done`). В multipart-пути extras не сливаются —
+для mp используйте `tg_mf_*` напрямую.
 
 ## Известные языковые ловушки Kiva
 
