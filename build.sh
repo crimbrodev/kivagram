@@ -28,7 +28,9 @@ GLUE="$OUT".glue.k
 cat "$LIBDIR/tg.k" $MODS "$SRC" > "$GLUE"
 "$KIVA_TC/kivac" "$GLUE" "$OUT.ir"
 rm -f "$GLUE"
-"$KIVA_TC/kivaa" "$OUT.ir" "$OUT"
+# -lsqlite3: хранилище FSM (lib/tg_kv.k) линкуется с системным sqlite3.
+# KIVA_LDFLAGS — дополнительные флаги линковки (например, свой sqlite).
+"$KIVA_TC/kivaa" "$OUT.ir" "$OUT" -lsqlite3 ${KIVA_LDFLAGS:-}
 # kivaa возвращает exit 0 даже при ошибках nasm/cc/ld — истина в бинарнике
 if [ ! -x "$OUT" ]; then
     echo "error: build failed (no binary at $OUT)" >&2
