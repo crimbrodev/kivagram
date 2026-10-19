@@ -2,9 +2,14 @@
 extern printf
 extern exit
 extern strcmp
+extern sprintf
 
 fails[1];
 logb[3];   // Buf-слот журнала срабатываний
+u6[1];     // /cmd@ourbot a b c
+u7[1];     // /cmd@otherbot a b c
+u8[1];     // callback_query с вложенным message
+u9[1];     // /привет — кириллица, entities UTF-16
 
 // --- хендлеры: текстово ДО main (правило порядка определений) ---
 
@@ -21,6 +26,82 @@ h_first(ctx) { tg_buf_add(&logb, "first;"); 1; }
 h_first2(ctx) { tg_buf_add(&logb, "first2;"); 1; }
 h_second(ctx) { tg_buf_add(&logb, "second;"); 1; }
 
+// --- хендлеры Task 6: чтение полей ctx ---
+h_ctx(ctx) {
+    auto s;
+    auto t;
+    t = tg_text(ctx);
+    s = tg_from_name(ctx);
+    tg_buf_add(&logb, "txt:");
+    tg_buf_add(&logb, s);
+    tg_buf_add(&logb, "|");
+    tg_buf_add(&logb, t);
+    tg_buf_add(&logb, "|");
+    s = tg_scratch();
+    sprintf(s, "zz%d", 777);   // затереть scratch между чтениями
+    tg_buf_add(&logb, t);      // поле ctx должно быть стабильно
+    tg_buf_add(&logb, "|");
+    t = tg_command(ctx);
+    if t == 0 {
+        tg_buf_add(&logb, "-");
+    } else {
+        tg_buf_add(&logb, t);
+    }
+    tg_buf_add(&logb, "|");
+    if tg_exclusive(ctx) == 1 {
+        tg_buf_add(&logb, "E1");
+    } else {
+        tg_buf_add(&logb, "E0");
+    }
+    tg_buf_add(&logb, ";");
+    1;
+}
+h_cmdctx(ctx) {
+    auto s;
+    auto a;
+    s = tg_command(ctx);
+    tg_buf_add(&logb, "cmd:");
+    tg_buf_add(&logb, s);
+    tg_buf_add(&logb, "|");
+    s = tg_target_bot(ctx);
+    tg_buf_add(&logb, s);
+    tg_buf_add(&logb, "|");
+    if tg_mine(ctx) == 1 {
+        tg_buf_add(&logb, "1");
+    } else {
+        tg_buf_add(&logb, "0");
+    }
+    tg_buf_add(&logb, "|");
+    a = tg_arg(ctx, 0);
+    tg_buf_add(&logb, a);
+    tg_buf_add(&logb, "|");
+    if tg_exclusive(ctx) == 1 {
+        tg_buf_add(&logb, "E1");
+    } else {
+        tg_buf_add(&logb, "E0");
+    }
+    tg_buf_add(&logb, ";");
+    1;
+}
+h_cbctx(ctx) {
+    auto s;
+    auto n;
+    s = tg_cbq_id(ctx);
+    tg_buf_add(&logb, "cb:");
+    tg_buf_add(&logb, s);
+    tg_buf_add(&logb, "|");
+    s = tg_data(ctx);
+    tg_buf_add(&logb, s);
+    tg_buf_add(&logb, "|");
+    n = tg_chat_id(ctx);
+    tg_buf_addnum(&logb, n);
+    tg_buf_add(&logb, "|");
+    n = tg_msg_id(ctx);
+    tg_buf_addnum(&logb, n);
+    tg_buf_add(&logb, ";");
+    1;
+}
+
 chk(cond, name) {
     if cond {
         1;
@@ -36,6 +117,7 @@ main() {
     auto bot;
     auto bot2;
     auto bot3;
+    auto bot4;
     auto u1;
     auto u2;
     auto u3;
@@ -97,6 +179,32 @@ main() {
     tg_handle_update(bot3, u2);
     chk(strcmp(logb[0], "first2;second;") == 0,
         "re-register: замена по имени, старый не зовётся, порядок сохранён");
+
+    // ===== Фаза D (Task 6): поля ctx, команда/цель/mine/args, callback, UTF-16-гард =====
+    u6 = "{\"update_id\":200, \"message\": {\"message_id\":30, \"chat\": {\"id\":66, \"type\": \"private\"}, \"from\": {\"id\":77, \"first_name\": \"Юля\"}, \"text\": \"/cmd@ourbot a b c\", \"entities\": [{\"offset\":0, \"length\": 11, \"type\": \"bot_command\"}]}}";
+    u7 = "{\"update_id\":201, \"message\": {\"message_id\":31, \"chat\": {\"id\":66, \"type\": \"private\"}, \"from\": {\"id\":77, \"first_name\": \"Юля\"}, \"text\": \"/cmd@otherbot a b c\", \"entities\": [{\"offset\":0, \"length\": 12, \"type\": \"bot_command\"}]}}";
+    u8 = "{\"update_id\":202, \"callback_query\": {\"id\": \"cbid1\", \"from\": {\"id\":9, \"first_name\": \"Ю\"}, \"chat_instance\": \"ci\", \"data\": \"press\", \"message\": {\"message_id\": 42, \"chat\": {\"id\":55, \"type\": \"private\"}, \"text\": \"press\"}}}";
+    u9 = "{\"update_id\":203, \"message\": {\"message_id\":32, \"chat\": {\"id\":66, \"type\": \"private\"}, \"from\": {\"id\":77, \"first_name\": \"Юля\"}, \"text\": \"/привет\", \"entities\": [{\"offset\":0, \"length\": 7, \"type\": \"bot_command\"}]}}";
+
+    bot4 = tg_bot("123:fake");
+    tg_bot_set_username(bot4, "ourbot");
+    tg_on_command(bot4, "cmd", &h_cmdctx);
+    tg_on_text(bot4, "ctxtext", &h_ctx);
+    tg_on_callback(bot4, "ctxcb", &h_cbctx);
+
+    tg_buf_reset(&logb);
+    tg_handle_update(bot4, u6);
+    chk(strcmp(logb[0], "cmd:cmd|ourbot|1|a|E1;") == 0,
+        "ctx: /cmd@ourbot — command/target/mine/args/exclusive");
+    tg_handle_update(bot4, u7);
+    chk(strcmp(logb[0], "cmd:cmd|ourbot|1|a|E1;cmd:cmd|otherbot|0|a|E0;") == 0,
+        "ctx: /cmd@otherbot — mine=0, exclusive=0");
+    tg_handle_update(bot4, u8);
+    chk(strcmp(logb[0], "cmd:cmd|ourbot|1|a|E1;cmd:cmd|otherbot|0|a|E0;cb:cbid1|press|55|42;") == 0,
+        "ctx: callback — cbq_id/data + chat_id/msg_id из вложенного message");
+    tg_handle_update(bot4, u9);
+    chk(strcmp(logb[0], "cmd:cmd|ourbot|1|a|E1;cmd:cmd|otherbot|0|a|E0;cb:cbid1|press|55|42;txt:Юля|/привет|/привет|-|E1;") == 0,
+        "ctx: UTF-16-гард (kind=1, command=0) + стабильность строк после scratch");
 
     if fails[0] == 0 {
         printf("PASS\n");

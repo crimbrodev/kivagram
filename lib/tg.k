@@ -881,10 +881,259 @@ tg_upd_is_cmd(upd) {
     ok;
 }
 
-// tg_handle_update(bot, upd*): kind → ctx (минимальное заполнение;
-// полное — tg_ctx_build в Task 6) → цикл хендлеров: подходит := (kind==0)
-// или (kind==kind_апдейта), затем уточняющий фильтр; возврат 0 → break.
-// Вызовы fn-указателей — через локальные копии.
+// tg_upd_kind(upd): классификация апдейта (см. правило матчинга v1)
+tg_upd_kind(upd) {
+    auto kind;
+    kind = 0;
+    if tg_get(upd, "callback_query") != 0 kind = 3;
+    if kind == 0 {
+        if tg_get(upd, "message.text") != 0 {
+            kind = 1;
+            if tg_upd_is_cmd(upd) kind = 2;
+        }
+    }
+    kind;
+}
+
+// ===== Context =====
+// Ctx-слот: 0 bot*, 1 upd_raw*, 2 kind, 3 chat_id, 4 msg_id, 5 from_id,
+// 6 from_name*, 7 text*, 8 command*, 9 target_bot*, 10 mine, 11 exclusive,
+// 12 args*, 13 cbq_id*, 14 cbq_data*, 15 inline_msg_id*, 16 strbuf*.
+// strbuf — приватный строковый буфер (~8 КБ): слово 0 = позиция байт,
+// строки копируются с offset 8 — поля ctx стабильны всю диспетчеризацию.
+
+// tg_ctx_put(ctx, src): копия NUL-строки в strbuf ctx; возвращает указатель
+tg_ctx_put(ctx, src) {
+    auto sb;
+    auto pos;
+    auto r;
+    auto d;
+    auto c;
+    sb = ctx[16];
+    pos = *sb;
+    r = sb + pos;
+    d = r;
+    c = @8 *src;
+    while c != 0 {
+        *d !8 c;
+        d = d + 1;
+        src = src + 1;
+        c = @8 *src;
+    }
+    *d !8 0;
+    *sb = (d - sb) + 1;
+    r;
+}
+
+// tg_ctx_getstr(ctx, upd, path): tg_get_str + копия в strbuf; 0 если пути нет
+tg_ctx_getstr(ctx, upd, path) {
+    auto s;
+    auto r;
+    r = 0;
+    s = tg_get_str(upd, path);
+    if s != 0 r = tg_ctx_put(ctx, s);
+    r;
+}
+
+// tg_ctx_parse_cmd(ctx, t): разбор скопированного текста kind==2:
+// имя (ASCII-lowercase) → [«@цель»] → args-сплит по пробелам (cap 16)
+tg_ctx_parse_cmd(ctx, t) {
+    auto p;
+    auto c;
+    auto done;
+    auto s;
+    auto arr;
+    auto n;
+    auto r;
+    auto end;
+    p = t + 1;
+    s = tg_scratch();
+    done = 0;
+    while done == 0 {
+        c = @8 *p;
+        if c == 64 done = 1;
+        else if c == 32 done = 1;
+        else if c == 0 done = 1;
+        else {
+            if c > 64 {
+                if c < 91 c = c + 32;
+            }
+            tg_scr_b(c);
+            p = p + 1;
+        }
+    }
+    *(&scratchbuf+scrpos) !8 0;
+    r = tg_ctx_put(ctx, s);
+    ctx[8] = r;
+    if @8 *p == 64 {
+        p = p + 1;
+        s = tg_scratch();
+        done = 0;
+        while done == 0 {
+            c = @8 *p;
+            if c == 32 done = 1;
+            else if c == 0 done = 1;
+            else {
+                tg_scr_b(c);
+                p = p + 1;
+            }
+        }
+        *(&scratchbuf+scrpos) !8 0;
+        r = tg_ctx_put(ctx, s);
+        ctx[9] = r;
+    }
+    done = 0;
+    while done == 0 {
+        if @8 *p == 32 {
+            p = p + 1;
+        } else {
+            done = 1;
+        }
+    }
+    if @8 *p != 0 {
+        arr = malloc(144);   // word0 = count + до 16 указателей
+        n = 0;
+        done = 0;
+        while done == 0 {
+            s = tg_scratch();
+            end = 0;
+            while end == 0 {
+                c = @8 *p;
+                if c == 32 end = 1;
+                else if c == 0 end = 1;
+                else {
+                    tg_scr_b(c);
+                    p = p + 1;
+                }
+            }
+            *(&scratchbuf+scrpos) !8 0;
+            n = n + 1;
+            r = tg_ctx_put(ctx, s);
+            *(arr + n*8) = r;
+            end = 0;
+            while end == 0 {
+                if @8 *p == 32 {
+                    p = p + 1;
+                } else {
+                    end = 1;
+                }
+            }
+            if @8 *p == 0 done = 1;
+            if n >= 16 done = 1;
+        }
+        *arr = n;
+        ctx[12] = arr;
+    }
+    1;
+}
+
+// tg_ctx_build(bot, upd*): выделение слота + strbuf, извлечение полей с
+// копированием строк, разбор первой entities-команды (v1-guard: kind=2
+// требует offset==0 и только ASCII-байты — в tg_upd_is_cmd), mine/exclusive
+tg_ctx_build(bot, upd) {
+    auto ctx;
+    auto sb;
+    auto i;
+    auto kind;
+    auto t;
+    auto s;
+    ctx = malloc(136);   // 17 слов
+    i = 0;
+    while i < 17 {
+        *(ctx + i*8) = 0;
+        i = i + 1;
+    }
+    sb = malloc(8192);
+    *sb = 8;
+    ctx[16] = sb;
+    ctx[0] = bot;
+    ctx[1] = upd;
+    kind = tg_upd_kind(upd);
+    ctx[2] = kind;
+    ctx[3] = tg_get_num(upd, "message.chat.id");
+    ctx[4] = tg_get_num(upd, "message.message_id");
+    ctx[5] = tg_get_num(upd, "message.from.id");
+    ctx[6] = tg_ctx_getstr(ctx, upd, "message.from.first_name");
+    if kind != 3 {
+        ctx[7] = tg_ctx_getstr(ctx, upd, "message.text");
+        if kind == 2 {
+            tg_ctx_parse_cmd(ctx, ctx[7]);
+        }
+        t = ctx[9];
+        if t == 0 {
+            ctx[10] = 1;
+            s = tg_get_str(upd, "message.chat.type");
+            if s != 0 {
+                if strcmp(s, "private") == 0 ctx[11] = 1;
+            }
+        } else {
+            s = bot[3];
+            if s != 0 {
+                if strcmp(s, t) == 0 {
+                    ctx[10] = 1;
+                    ctx[11] = 1;
+                }
+            }
+        }
+    }
+    if kind == 3 {
+        ctx[3] = tg_get_num(upd, "callback_query.message.chat.id");
+        ctx[4] = tg_get_num(upd, "callback_query.message.message_id");
+        ctx[5] = tg_get_num(upd, "callback_query.from.id");
+        ctx[6] = tg_ctx_getstr(ctx, upd, "callback_query.from.first_name");
+        ctx[13] = tg_ctx_getstr(ctx, upd, "callback_query.id");
+        ctx[14] = tg_ctx_getstr(ctx, upd, "callback_query.data");
+        ctx[15] = tg_ctx_getstr(ctx, upd, "callback_query.inline_message_id");
+    }
+    ctx;
+}
+
+tg_ctx_free(ctx) {
+    auto a;
+    a = ctx[12];
+    if a != 0 {
+        free(a);
+    }
+    free(ctx[16]);
+    free(ctx);
+    1;
+}
+
+// ===== Аксессоры Ctx (закрытый список по таблице) =====
+tg_bot_of(ctx) { ctx[0]; }
+tg_raw(ctx) { ctx[1]; }
+tg_kind(ctx) { ctx[2]; }
+tg_chat_id(ctx) { ctx[3]; }
+tg_msg_id(ctx) { ctx[4]; }
+tg_from_id(ctx) { ctx[5]; }
+tg_from_name(ctx) { ctx[6]; }
+tg_text(ctx) { ctx[7]; }
+tg_command(ctx) { ctx[8]; }
+tg_target_bot(ctx) { ctx[9]; }
+tg_mine(ctx) { ctx[10]; }
+tg_exclusive(ctx) { ctx[11]; }
+tg_cbq_id(ctx) { ctx[13]; }
+tg_data(ctx) { ctx[14]; }
+tg_inline_msg_id(ctx) { ctx[15]; }
+
+tg_arg(ctx, n) {
+    auto a;
+    auto c;
+    auto r;
+    r = 0;
+    a = ctx[12];
+    if a != 0 {
+        c = *a;
+        if n < c {
+            r = *(a + n*8 + 8);
+        }
+    }
+    r;
+}
+
+// tg_handle_update(bot, upd*): kind → полный ctx (tg_ctx_build) → цикл
+// хендлеров: подходит := (kind==0) или (kind==kind_апдейта), затем уточняющий
+// фильтр; возврат 0 → break. Вызовы fn-указателей — через локальные копии.
 tg_handle_update(bot, upd) {
     auto kind;
     auto ctx;
@@ -895,23 +1144,8 @@ tg_handle_update(bot, upd) {
     auto ok;
     auto fp;
     auto r;
-    kind = 0;
-    if tg_get(upd, "callback_query") != 0 kind = 3;
-    if kind == 0 {
-        if tg_get(upd, "message.text") != 0 {
-            kind = 1;
-            if tg_upd_is_cmd(upd) kind = 2;
-        }
-    }
-    ctx = malloc(136);   // 17 слов
-    i = 0;
-    while i < 17 {
-        *(ctx + i*8) = 0;
-        i = i + 1;
-    }
-    *ctx = bot;
-    *(ctx + 8) = upd;
-    *(ctx + 16) = kind;
+    ctx = tg_ctx_build(bot, upd);
+    kind = ctx[2];
     hp = bot[4];
     n = bot[5];
     i = 0;
@@ -935,6 +1169,6 @@ tg_handle_update(bot, upd) {
         }
         i = i + 1;
     }
-    free(ctx);
+    tg_ctx_free(ctx);
     1;
 }
