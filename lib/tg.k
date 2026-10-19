@@ -1314,3 +1314,155 @@ tg_send_photo_url(bot, chat_id, url) {
     body = tg_params_done(&tg_paramslot);
     tg_call(bot, "sendPhoto", body);
 }
+
+// ===== Polling =====
+
+extern strstr
+extern fprintf
+
+tg_namebuf[64];   // 512 байт — username бота из getMe (стабильная копия)
+tg_offfile[32];   // 256 байт — имя файла offset: tg_<id>.offset
+
+// tg_offset_read(bot): прочитать offset из файла; нет файла/пусто → 0
+tg_offset_read(bot) {
+    auto f;
+    auto p;
+    auto ok;
+    auto n;
+    n = 0;
+    p = bot[9];
+    if p != 0 {
+        f = fopen(p, "r");
+        if f != 0 {
+            ok = fgets(&readbuf, 512, f);
+            fclose(f);
+            if ok != 0 {
+                n = strtoull(&readbuf, 0, 10);
+            }
+        }
+    }
+    n;
+}
+
+// tg_offset_write(bot, off): offset — в слот (word8) и в файл
+tg_offset_write(bot, off) {
+    auto f;
+    *(bot + 64) = off;
+    f = fopen(bot[9], "w");
+    if f != 0 {
+        fprintf(f, "%ld", off);
+        fclose(f);
+        1;
+    } else {
+        0;
+    }
+}
+
+// tg_identify(bot): getMe → bot_id/username в слот, имя файла offset.
+// Ошибка → bot_id = цифры префикса токена до ':' (поллинг не блокируется),
+// предупреждение в stdout, tg_last_err = 1, возврат 0.
+tg_identify(bot) {
+    auto id;
+    auto s;
+    auto r;
+    r = tg_call(bot, "getMe", 0);
+    if r == 1 {
+        id = tg_get_num(tg_http_body(), "result.id");
+        *(bot + 16) = id;
+        s = tg_get_str(tg_http_body(), "result.username");
+        if s != 0 {
+            strcpy(&tg_namebuf, s);
+            *(bot + 24) = &tg_namebuf;
+        }
+        sprintf(&tg_offfile, "tg_%ld.offset", id);
+        *(bot + 72) = &tg_offfile;
+        1;
+    } else {
+        id = strtoull(bot[0], 0, 10);
+        *(bot + 16) = id;
+        sprintf(&tg_offfile, "tg_%ld.offset", id);
+        *(bot + 72) = &tg_offfile;
+        printf("[tg] getMe failed — identify fallback, id=%ld (check token/network)\n", id);
+        tg_last_err = 1;
+        0;
+    }
+}
+
+// tg_polling(bot): identify → чтение offset → один deleteWebhook → цикл
+// getUpdates (timeout=30): по каждому апдейту — диспетчеризация, затем
+// offset = update_id+1 в слот и файл (at-least-once); пустой ответ — без
+// записи. Ошибка: "terminated by other getUpdates" → стоп; 409 →
+// deleteWebhook + продолжить; иное → sleep(retry_after) или 5 + продолжить.
+// Тело ответа СНАПШОТИТСЯ перед диспетчеризацией: хендлеры шлют свои
+// запросы и перезаписывают httpresp.
+tg_polling(bot) {
+    auto offset;
+    auto r;
+    auto n;
+    auto i;
+    auto upd;
+    auto desc;
+    auto code;
+    auto retry;
+    auto body;
+    auto done;
+    auto hb;
+    auto p;
+    tg_identify(bot);
+    offset = tg_offset_read(bot);
+    *(bot + 64) = offset;
+    tg_call(bot, "deleteWebhook", 0);
+    *(bot + 88) = 1;
+    while *(bot + 88) == 1 {
+        tg_params_reset(&tg_paramslot);
+        tg_param_num(&tg_paramslot, "timeout", 30);
+        tg_param_num(&tg_paramslot, "offset", offset);
+        body = tg_params_done(&tg_paramslot);
+        r = tg_call(bot, "getUpdates", body);
+        if r == 1 {
+            hb = tg_http_body();
+            n = tg_count(hb, "result");
+            if n > 0 {
+                body = malloc(strlen(hb) + 1);   // снапшот: ответы хендлеров
+                strcpy(body, hb);                // не должны затирать данные
+                hb = body;
+                i = 0;
+                while i < n {
+                    p = tg_scratch();
+                    sprintf(p, "result.%ld", i);
+                    upd = tg_get(hb, p);
+                    if upd != 0 {
+                        tg_handle_update(bot, upd);
+                        offset = tg_get_num(upd, "update_id") + 1;
+                        tg_offset_write(bot, offset);
+                    }
+                    i = i + 1;
+                }
+                free(body);
+            }
+        } else {
+            code = tg_get_num(tg_http_body(), "error_code");
+            desc = tg_get_str(tg_http_body(), "description");
+            done = 0;
+            if desc != 0 {
+                if strstr(desc, "terminated by other getUpdates") != 0 done = 1;
+            }
+            if done == 1 {
+                printf("[tg] polling stopped: another getUpdates instance is running\n");
+                *(bot + 88) = 0;
+            } else {
+                if code == 409 {
+                    tg_call(bot, "deleteWebhook", 0);
+                } else {
+                    retry = tg_get_num(tg_http_body(), "parameters.retry_after");
+                    if retry > 0 {
+                        sleep(retry);
+                    } else {
+                        sleep(5);
+                    }
+                }
+            }
+        }
+    }
+    1;
+}
