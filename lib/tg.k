@@ -428,7 +428,109 @@ tg_get_bool(resp, path) {
 }
 
 // tg_get_str(resp, path): копия значения в scratch (кавычки сняты,
-// анэскейп \" \\ \n \t \r; \uXXXX не поддержан — Telegram шлёт UTF-8 сырыми);
+// tg_hex1(c): значение hex-цифры0-15; 16 — не цифра (флаг, без отрицательных)
+tg_hex1(c) {
+    auto v;
+    v = 16;
+    if c >= 48 {
+        if c <= 57 v = c - 48;
+    }
+    if c >= 97 {
+        if c <= 102 v = c - 87;
+    }
+    if c >= 65 {
+        if c <= 70 v = c - 55;
+    }
+    v;
+}
+
+// tg_utf8_put(cp): дописать кодпоинт в scratch как UTF-8
+tg_utf8_put(cp) {
+    if cp < 128 {
+        tg_scr_b(cp);
+    } else {
+        if cp < 2048 {
+            tg_scr_b(192 + (cp >> 6));
+            tg_scr_b(128 + (cp & 63));
+        } else {
+            if cp < 65536 {
+                tg_scr_b(224 + (cp >> 12));
+                tg_scr_b(128 + ((cp >> 6) & 63));
+                tg_scr_b(128 + (cp & 63));
+            } else {
+                tg_scr_b(240 + (cp >> 18));
+                tg_scr_b(128 + ((cp >> 12) & 63));
+                tg_scr_b(128 + ((cp >> 6) & 63));
+                tg_scr_b(128 + (cp & 63));
+            }
+        }
+    }
+}
+
+// tg_uni_put(bs): bs — на \uXXXX (возможно парой \uD83D\uDE00);
+// пишет UTF-8 в scratch, возврат — съеденные байты (6/10), 0 — не \u
+tg_uni_put(bs) {
+    auto cp;
+    auto lo;
+    auto ok;
+    auto hok;
+    auto k;
+    auto h;
+    auto adv;
+    adv = 0;
+    if @8 *(bs+1) == 117 {
+        adv = 6;
+        cp = 0;
+        ok = 1;
+        k = 0;
+        while k < 4 {
+            h = tg_hex1(@8 *(bs+2+k));
+            if h > 15 ok = 0;
+            cp = cp * 16 + (h & 15);
+            k = k + 1;
+        }
+        if ok {
+            if cp >= 55296 {
+                if cp <= 56319 {
+                    // высокий суррогат — обязателен низкий следом
+                    ok = 0;
+                    if @8 *(bs+6) == 92 {
+                        if @8 *(bs+7) == 117 {
+                            lo = 0;
+                            hok = 1;
+                            k = 0;
+                            while k < 4 {
+                                h = tg_hex1(@8 *(bs+8+k));
+                                if h > 15 hok = 0;
+                                lo = lo * 16 + (h & 15);
+                                k = k + 1;
+                            }
+                            if hok {
+                                if lo >= 56320 {
+                                    if lo <= 57343 {
+                                        cp = 65536 + ((cp - 55296) * 1024) + (lo - 56320);
+                                        adv = 12;
+                                        ok = 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // одинокий низкий суррогат — невалиден
+                    if cp >= 56320 {
+                        if cp <= 57343 ok = 0;
+                    }
+                }
+            }
+        }
+        if ok == 0 cp = 65533;   // U+FFFD — замена при невалидном escape
+        tg_utf8_put(cp);
+    }
+    adv;
+}
+
+// анэскейп \" \\ \n \t \r \b \f и \uXXXX (суррогатные пары);
 // 0 — не найдено
 tg_get_str(resp, path) {
     auto r;
@@ -437,6 +539,7 @@ tg_get_str(resp, path) {
     auto e;
     auto out;
     auto done;
+    auto adv;
     out = 0;
     r = tg_get(resp, path);
     if r != 0 {
@@ -450,13 +553,21 @@ tg_get_str(resp, path) {
                 else if c == 34 done = 2;
                 else if c == 92 {
                     e = @8 *(p+1);
-                    if e == 34 tg_scr_b(34);
-                    else if e == 92 tg_scr_b(92);
-                    else if e == 110 tg_scr_b(10);
-                    else if e == 116 tg_scr_b(9);
-                    else if e == 114 tg_scr_b(13);
-                    else tg_scr_b(e);
-                    p = p + 2;
+                    adv = 2;
+                    if e == 117 {
+                        adv = tg_uni_put(p);
+                        if adv == 0 adv = 2;
+                    } else {
+                        if e == 34 tg_scr_b(34);
+                        else if e == 92 tg_scr_b(92);
+                        else if e == 110 tg_scr_b(10);
+                        else if e == 116 tg_scr_b(9);
+                        else if e == 114 tg_scr_b(13);
+                        else if e == 98 tg_scr_b(8);
+                        else if e == 102 tg_scr_b(12);
+                        else tg_scr_b(e);
+                    }
+                    p = p + adv;
                 } else {
                     tg_scr_b(c);
                     p = p + 1;

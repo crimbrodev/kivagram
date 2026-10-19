@@ -10,6 +10,7 @@ s_one[1];
 s_bool[1];
 s_esc[1];
 tailp[3];
+s_uni[1];
 
 chk(cond, name) {
     if cond {
@@ -88,6 +89,14 @@ main() {
     *(&tailp + 8) !8 0;
     v = tg_get(s_list, &tailp);
     chk(v != 0, "tail: путь с хвостом за NUL находит result.0");
+
+    // \uXXXX: Telegram экранирует не-ASCII (реальный дамп:
+    // "first_name":"\u0421\u0430\u0448\u0430"), эмодзи — суррогатной парой
+    s_uni = "{\"name\":\"\\u0410\\u043d\\u044f\", \"emo\":\"\\ud83d\\ude00\"}";
+    v = tg_get_str(s_uni, "name");
+    chk(strcmp(v, "Аня") == 0, "uni: \\u0410\\u043d\\u044f разбирается в Аня");
+    v = tg_get_str(s_uni, "emo");
+    chk(strcmp(v, "😀") == 0, "uni: суррогатная пара дает эмодзи");
 
     if fails[0] == 0 {
         printf("PASS\n");
