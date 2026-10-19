@@ -669,3 +669,272 @@ tg_call(bot, method, params) {
     }
     ok;
 }
+
+// ===== Bot & registry & dispatch =====
+// Bot-слот (индексы слов): 0 token*, 1 base_url*, 2 bot_id, 3 username*,
+// 4 handlers*, 5 handlers_len, 6 handlers_cap, 7 on_error fn*, 8 offset,
+// 9 offset_file*, 10 last_resp*, 11 polling_flag.
+// Handler-слот (4 слова): 0 name*, 1 kind, 2 filter fn*, 3 handler fn*.
+
+extern strcmp
+
+tg_cur_name;   // имя текущего обрабатываемого хендлера — для встроенных фильтров
+
+// tg_flt_cmd(ctx): встроенный фильтр имени команды — сравнивает имя из
+// текста апдейта (после '/', до '@'/' '/конца, ASCII-lowercase) с tg_cur_name.
+// NB: tg_get возвращает raw-указатель — для строк значение начинается с
+// opening-quote, его и пропускаем.
+tg_flt_cmd(ctx) {
+    auto upd;
+    auto text;
+    auto p;
+    auto c;
+    auto done;
+    auto s;
+    auto ok;
+    upd = ctx[1];
+    text = tg_get(upd, "message.text");
+    ok = 0;
+    if text != 0 {
+        if @8 *text == 34 {
+            p = text + 1;
+            if @8 *p == 47 {
+                s = tg_scratch();
+                p = p + 1;
+                done = 0;
+                while done == 0 {
+                    c = @8 *p;
+                    if c == 0 done = 1;
+                    else if c == 32 done = 1;
+                    else if c == 64 done = 1;
+                    else {
+                        if c > 64 {
+                            if c < 91 c = c + 32;
+                        }
+                        tg_scr_b(c);
+                        p = p + 1;
+                    }
+                }
+                *(&scratchbuf+scrpos) !8 0;
+                if strcmp(s, tg_cur_name) == 0 ok = 1;
+            }
+        }
+    }
+    ok;
+}
+
+// tg_flt_msg(ctx): встроенный фильтр «есть message без text» (фото и т.п.)
+tg_flt_msg(ctx) {
+    auto upd;
+    auto ok;
+    upd = ctx[1];
+    ok = 0;
+    if tg_get(upd, "message") != 0 {
+        if tg_get(upd, "message.text") == 0 ok = 1;
+    }
+    ok;
+}
+
+// tg_bot(token): malloc-слот бота, base_url и on_error — дефолтные
+tg_bot(token) {
+    auto b;
+    auto hp;
+    auto i;
+    b = malloc(96);   // 12 слов
+    i = 0;
+    while i < 12 {
+        *(b + i*8) = 0;
+        i = i + 1;
+    }
+    *b = token;
+    *(b + 8) = "https://api.telegram.org";
+    *(b + 56) = &tg_default_on_error;
+    hp = malloc(256);   // 8 записей × 4 слова
+    *(b + 32) = hp;
+    *(b + 40) = 0;      // handlers_len
+    *(b + 48) = 8;      // handlers_cap
+    b;
+}
+
+tg_bot_set_username(bot, name) {
+    *(bot + 24) = name;
+    1;
+}
+
+tg_stop(bot) {
+    *(bot + 88) = 0;   // polling_flag
+    1;
+}
+
+// tg_reg(bot, kind, name, filter, fn): примитив реестра; замена по имени
+// сохраняет позицию; рост ×2. NB: сравнения < / >= в Kive БЕЗЗНАКОВЫЕ —
+// отрицательные сентинелы (fpos=-1) недопустимы, используем флаг found.
+tg_reg(bot, kind, name, filter, fn) {
+    auto hp;
+    auto len;
+    auto cap;
+    auto i;
+    auto h;
+    auto nh;
+    auto fpos;
+    auto found;
+    hp = bot[4];
+    len = bot[5];
+    cap = bot[6];
+    found = 0;
+    fpos = 0;
+    i = 0;
+    while i < len {
+        if found == 0 {
+            h = hp + i * 32;
+            if strcmp(*h, name) == 0 {
+                found = 1;
+                fpos = i;
+            }
+        }
+        i = i + 1;
+    }
+    if found == 1 {
+        h = hp + fpos * 32;
+        *h = name;
+        *(h + 8) = kind;
+        *(h + 16) = filter;
+        *(h + 24) = fn;
+    } else {
+        if len >= cap {
+            nh = malloc(cap * 64);   // 2*cap записей × 32 байта
+            memcpy(nh, hp, len * 32);
+            free(hp);
+            hp = nh;
+            cap = cap + cap;
+            *(bot + 32) = hp;
+            *(bot + 48) = cap;
+        }
+        h = hp + len * 32;
+        *h = name;
+        *(h + 8) = kind;
+        *(h + 16) = filter;
+        *(h + 24) = fn;
+        *(bot + 40) = len + 1;
+    }
+    1;
+}
+
+// ===== Сахар регистрации (kind + встроенный фильтр) =====
+
+tg_on(bot, name, filter, fn) {
+    tg_reg(bot, 0, name, filter, fn);
+}
+
+tg_on_update(bot, name, fn) {
+    tg_reg(bot, 0, name, 0, fn);
+}
+
+tg_on_text(bot, name, fn) {
+    tg_reg(bot, 1, name, 0, fn);
+}
+
+tg_on_command(bot, cmd, fn) {
+    tg_reg(bot, 2, cmd, &tg_flt_cmd, fn);
+}
+
+tg_on_callback(bot, name, fn) {
+    tg_reg(bot, 3, name, 0, fn);
+}
+
+tg_on_message(bot, name, fn) {
+    tg_reg(bot, 0, name, &tg_flt_msg, fn);
+}
+
+// tg_upd_is_cmd(upd): kind=2-кандидат — entities.0 bot_command, offset 0,
+// первая сущность только ASCII (v1-guard: не-ASCII → обычный текст)
+tg_upd_is_cmd(upd) {
+    auto ent;
+    auto t;
+    auto c;
+    auto i;
+    auto ok;
+    auto done;
+    ok = 0;
+    ent = tg_get_str(upd, "message.entities.0.type");
+    if ent != 0 {
+        if strcmp(ent, "bot_command") == 0 {
+            if tg_get_num(upd, "message.entities.0.offset") == 0 {
+                ok = 1;
+                t = tg_get(upd, "message.text");
+                i = 0;
+                done = 0;
+                while done == 0 {
+                    c = @8 *(t+i);
+                    if c == 0 done = 1;
+                    else if c == 32 done = 1;
+                    else if c == 64 done = 1;
+                    else {
+                        if c > 127 ok = 0;
+                        i = i + 1;
+                    }
+                    if ok == 0 done = 1;
+                }
+            }
+        }
+    }
+    ok;
+}
+
+// tg_handle_update(bot, upd*): kind → ctx (минимальное заполнение;
+// полное — tg_ctx_build в Task 6) → цикл хендлеров: подходит := (kind==0)
+// или (kind==kind_апдейта), затем уточняющий фильтр; возврат 0 → break.
+// Вызовы fn-указателей — через локальные копии.
+tg_handle_update(bot, upd) {
+    auto kind;
+    auto ctx;
+    auto i;
+    auto n;
+    auto hp;
+    auto h;
+    auto ok;
+    auto fp;
+    auto r;
+    kind = 0;
+    if tg_get(upd, "callback_query") != 0 kind = 3;
+    if kind == 0 {
+        if tg_get(upd, "message.text") != 0 {
+            kind = 1;
+            if tg_upd_is_cmd(upd) kind = 2;
+        }
+    }
+    ctx = malloc(136);   // 17 слов
+    i = 0;
+    while i < 17 {
+        *(ctx + i*8) = 0;
+        i = i + 1;
+    }
+    *ctx = bot;
+    *(ctx + 8) = upd;
+    *(ctx + 16) = kind;
+    hp = bot[4];
+    n = bot[5];
+    i = 0;
+    while i < n {
+        h = hp + i * 32;
+        ok = 0;
+        if *(h + 8) == 0 ok = 1;
+        if *(h + 8) == kind ok = 1;
+        if ok {
+            tg_cur_name = *h;
+            fp = *(h + 16);
+            if fp != 0 {
+                r = fp(ctx);
+                if r == 0 ok = 0;
+            }
+            if ok {
+                fp = *(h + 24);
+                r = fp(ctx);
+                if r == 0 i = n;
+            }
+        }
+        i = i + 1;
+    }
+    free(ctx);
+    1;
+}
