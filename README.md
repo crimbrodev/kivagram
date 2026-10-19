@@ -51,15 +51,18 @@ export KIVA_TC=$PWD   # путь к kivac/kivaa; по умолчанию /tmp/op
 
 ## Сборка бота
 
-`build.sh` склеивает `lib/tg.k` + ваш файл, компилирует и линкует:
+`build.sh` склеивает `lib/tg.k` + модули `lib/tg_*.k` (алфавит,
+`LC_ALL=C`) + ваш файл, компилирует и линкует:
 
 ```sh
 ./build.sh examples/bot.k bot
 ./bot
 ```
 
-Внутри — обычная склейка (`cat lib/tg.k вход.k > build.k`), поэтому
-никаких модулей и `import` в Kive нет: одна программа — один файл.
+Внутри — обычная склейка (в уникальный на сборку `*.glue.k`,
+поэтому параллельные сборки не мешают друг другу), поэтому никаких
+`import` в Kive нет: одна программа — один файл. Модули `lib/tg_*.k`
+автоподключаются: свой модуль = просто новый файл в `lib/`.
 
 Тесты: `./build.sh tests/t_buf.k /tmp/t_buf && /tmp/t_buf` (и так для
 каждого `tests/t_*.k`; часть тестов ходит в сеть за 401 с фейковым
@@ -153,16 +156,45 @@ ggram (MIT, TRIGON.IM) — вдохновитель дизайна API; kivagram
   (`[tg] method error code: description`); свой обработчик —
   `bot.on_error` (слот word7).
 
-## Скоуп v1
+## Скоуп v1 и волна v2
 
 Есть: long-polling, диспетчер с фильтрами, команды (ASCII-гард:
 `/команда` с кириллицей распознаётся как обычный текст), callback'и,
 текстовые методы, ответы на кнопки, сушка параметров, 429-ретраи,
 409 → `deleteWebhook`, «terminated by other getUpdates» → стоп.
 
-Вне скоупа: отправка файлов с диска (multipart — в v2 через `curl -F`),
-webhooks, сессии/kv-хранилище, медиагруппы, стикеры, voice/videoNote,
-свои variadic.
+Вне скоупа: отправка файлов с диска (multipart — отдельная волна),
+webhooks, сессии/kv-хранилище, свои variadic.
+
+## Модули v2 (волна 1)
+
+Полный gap-анализ Bot API — `docs/GAP-full-api-2026-10-19.md`;
+волна-1 закрыла:
+
+| Модуль | Содержимое |
+|---|---|
+| `lib/tg.k` (ядро) | диспетчер: kind 4–10 (edited/channel/my_chat_member/chat_join_request/inline/pre_checkout/shipping), `tg_allow_updates_add` → `allowed_updates`, `tg_param_raw`, `tg_html_escape`, `tg_business_conn` |
+| `lib/tg_media.k` | sendAudio/Document/Video/Animation/Voice/VideoNote |
+| `lib/tg_geo.k` | Location (дроби через raw)/Venue/Contact/Dice/Sticker/LivePhoto |
+| `lib/tg_poll.k` | MediaGroup/Poll/stopPoll/PaidMedia |
+| `lib/tg_msg.k` | forward*/copy*/edit* /deleteMessages (`tg_edit_markup(...,0)` → `reply_markup:null`) |
+| `lib/tg_answers.k` | InlineQuery/PreCheckout/Shipping/WebApp/Guest/JoinRequest |
+| `lib/tg_kb.k` | билдеры `tg_kb_*`/`tg_rkb_*`, remove/force_reply/reply_params/link_preview |
+| `lib/tg_admin.k` | баны/restrict/promote/getChat* |
+| `lib/tg_chat.k` | пины/title/инвайты/leave/approve+declineJoin |
+| `lib/tg_config.k` | setMyCommands/имена/описания/меню-кнопка/права |
+| `lib/tg_forum.k` | форум-топики и general-топик |
+| `lib/tg_react.k` | реакции, профиль-геттеры, getWebhookInfo/logOut/close |
+| `lib/tg_pay.k` | sendInvoice (description — через `tg_call`)/createInvoiceLink/звёзды |
+| `lib/tg_ext.k` | `tg_sendx`/`tg_editx`/`tg_photox` (parse_mode+markup+reply_to), `tg_answer_cb`, `tg_actionx` |
+
+Конвенция: обёртка принимает обязательные параметры + ходовые
+опциональные с контрактом `0 = не передавать` (≤6 аргументов);
+JSON-объекты/массивы (`options`, `permissions`, `prices`, `commands`,
+`reaction`...) — аргумент-строка в `tg_param_json` (в тело входит без
+кавычек); всё, что не вошло в обёртку, — задокументировано в шапке
+модуля и вызывается через `tg_call` напрямую. Тесты — `tests/t_v2_*.k`
+(dry-run, `tg_composed`).
 
 ## Известные языковые ловушки Kiva
 
