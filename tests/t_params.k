@@ -2,6 +2,7 @@
 extern printf
 extern exit
 extern strcmp
+extern sprintf
 
 fails[1];
 b[3];
@@ -19,6 +20,7 @@ chk(cond, name) {
 global main
 main() {
     auto p;
+    auto s;
 
     fails[0] = 0;
 
@@ -59,6 +61,17 @@ main() {
     tg_param_str(&b, "text", "привет");
     p = tg_params_done(&b);
     chk(strcmp(p, "{\"text\":\"привет\"}") == 0, "cyrillic: значение");
+
+    // значение, отформатированное В scratch (sprintf), не должно затираться
+    // при сборке параметров (escape ключа / addnum раньше писали в scratch)
+    s = tg_scratch();
+    sprintf(s, "эхо: мир %d", 42);
+    tg_params_reset(&b);
+    tg_param_num(&b, "chat_id", 55);
+    tg_param_str(&b, "text", s);
+    p = tg_params_done(&b);
+    chk(strcmp(p, "{\"chat_id\":55,\"text\":\"эхо: мир 42\"}") == 0,
+        "scratch-val: значение из scratch дожило до done");
 
     // повторное использование буфера после done
     tg_params_reset(&b);

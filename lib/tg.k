@@ -46,50 +46,71 @@ tg_scr_add(s) {
     &scratchbuf + start;
 }
 
+// ===== Escape buffer =====
+// tg_json_escape пишет в ВЫДЕЛЕННЫЙ буфер, а не в scratch: значение может
+// ЖИТЬ в scratch (sprintf) и не должно быть уничтожено сборкой параметров.
+tg_escbuf[4096];   // 32 КБ (текст ≤4096 × 6 на худший случай)
+tg_escpos;
+tg_numbuf[8];      // 64 байта — вывод tg_buf_addnum (тоже вне scratch)
+
+// tg_eb_b(c): дописать байт в escape-буфер (с отсечкой по границе)
+tg_eb_b(c) {
+    if tg_escpos < 32766 {
+        *(&tg_escbuf+tg_escpos) !8 c;
+        tg_escpos = tg_escpos + 1;
+    }
+    1;
+}
+
 // tg_json_escape(src): экранировать src как содержимое JSON-строки,
-// дописать в scratch, вернуть указатель на кусок.
+// дописать в tg_escbuf, вернуть указатель.
 // " -> \", \ -> \\, \n -> \n, \r -> \r, \t -> \t, прочие <0x20 -> \u00XX,
 // байты >=0x80 (UTF-8) — как есть.
 tg_json_escape(src) {
     auto i;
     auto c;
     auto h;
-    auto start;
+    auto done;
     i = 0;
-    start = scrpos;
-    while @8 *(src+i) {
+    tg_escpos = 0;
+    done = 0;
+    while done == 0 {
         c = @8 *(src+i);
-        if c == 34 {
-            tg_scr_b(92);
-            tg_scr_b(34);
-        } else if c == 92 {
-            tg_scr_b(92);
-            tg_scr_b(92);
-        } else if c == 10 {
-            tg_scr_b(92);
-            tg_scr_b(110);
-        } else if c == 13 {
-            tg_scr_b(92);
-            tg_scr_b(114);
-        } else if c == 9 {
-            tg_scr_b(92);
-            tg_scr_b(116);
-        } else if c < 32 {
-            tg_scr_b(92);
-            tg_scr_b(117);
-            tg_scr_b(48);
-            tg_scr_b(48);
-            h = (c >> 4) & 15;
-            if h < 10 tg_scr_b(48 + h); else tg_scr_b(87 + h);
-            h = c & 15;
-            if h < 10 tg_scr_b(48 + h); else tg_scr_b(87 + h);
-        } else {
-            tg_scr_b(c);
+        if c == 0 done = 1;
+        else if tg_escpos > 32700 done = 1;
+        else {
+            if c == 34 {
+                tg_eb_b(92);
+                tg_eb_b(34);
+            } else if c == 92 {
+                tg_eb_b(92);
+                tg_eb_b(92);
+            } else if c == 10 {
+                tg_eb_b(92);
+                tg_eb_b(110);
+            } else if c == 13 {
+                tg_eb_b(92);
+                tg_eb_b(114);
+            } else if c == 9 {
+                tg_eb_b(92);
+                tg_eb_b(116);
+            } else if c < 32 {
+                tg_eb_b(92);
+                tg_eb_b(117);
+                tg_eb_b(48);
+                tg_eb_b(48);
+                h = (c >> 4) & 15;
+                if h < 10 tg_eb_b(48 + h); else tg_eb_b(87 + h);
+                h = c & 15;
+                if h < 10 tg_eb_b(48 + h); else tg_eb_b(87 + h);
+            } else {
+                tg_eb_b(c);
+            }
+            i = i + 1;
         }
-        i = i + 1;
     }
-    *(&scratchbuf+scrpos) !8 0;  // NUL без продвижения позиции
-    &scratchbuf + start;
+    *(&tg_escbuf+tg_escpos) !8 0;
+    &tg_escbuf;
 }
 
 // Buf-слот: слова 0 ptr*, 1 len, 2 cap. Поверх malloc, рост ×2.
@@ -120,13 +141,12 @@ tg_buf_add(b, s) {
     1;
 }
 
-// tg_buf_addnum(b, num): decimal через sprintf в scratch.
+// tg_buf_addnum(b, num): decimal через sprintf в tg_numbuf (ВНЕ scratch —
+// сброс scratch затирал бы значения-жертвы, живущие в нём).
 // NB: %ld — Kiva передаёт 64-бит слова, а реальные Telegram-id > 2^31
 tg_buf_addnum(b, num) {
-    auto p;
-    p = tg_scratch();
-    sprintf(p, "%ld", num);
-    tg_buf_add(b, p);
+    sprintf(&tg_numbuf, "%ld", num);
+    tg_buf_add(b, &tg_numbuf);
 }
 
 tg_buf_reset(b) {
