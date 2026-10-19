@@ -10,6 +10,7 @@ u6[1];     // /cmd@ourbot a b c
 u7[1];     // /cmd@otherbot a b c
 u8[1];     // callback_query с вложенным message
 u9[1];     // /привет — кириллица, entities UTF-16
+u10[1];    // /start — голая команда без аргументов (живой кейс)
 
 // --- хендлеры: текстово ДО main (правило порядка определений) ---
 
@@ -159,6 +160,13 @@ main() {
     tg_handle_update(bot, u5);
     chk(strcmp(logb[0], "upd;cmd;upd;text;upd;cb;upd;msg;upd;help;") == 0,
         "cmd: имя команды фильтрует (start не сработал на /help)");
+
+    // (6) голая команда: текст кончается закрывающей кавычкой, не пробелом
+    u10 = "{\"update_id\":105, \"message\": {\"message_id\":11, \"chat\": {\"id\":55, \"type\": \"private\"}, \"from\": {\"id\":9, \"first_name\": \"Ю\"}, \"text\": \"/start\", \"entities\": [{\"offset\":0, \"length\": 6, \"type\": \"bot_command\"}]}}";
+    tg_buf_reset(&logb);
+    tg_handle_update(bot, u10);
+    chk(strcmp(logb[0], "upd;cmd;") == 0,
+        "cmd: голый /start — стоп на закрывающей кавычке");
 
     // ===== Фаза B: return 0 прерывает цепочку =====
     tg_buf_reset(&logb);

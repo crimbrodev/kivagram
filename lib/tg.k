@@ -874,6 +874,7 @@ tg_flt_cmd(ctx) {
                     if c == 0 done = 1;
                     else if c == 32 done = 1;
                     else if c == 64 done = 1;
+                    else if c == 34 done = 1;
                     else {
                         if c > 64 {
                             if c < 91 c = c + 32;
@@ -1029,6 +1030,7 @@ tg_upd_is_cmd(upd) {
             if tg_get_num(upd, "message.entities.0.offset") == 0 {
                 ok = 1;
                 t = tg_get(upd, "message.text");
+                if @8 *t == 34 t = t + 1;
                 i = 0;
                 done = 0;
                 while done == 0 {
@@ -1036,6 +1038,7 @@ tg_upd_is_cmd(upd) {
                     if c == 0 done = 1;
                     else if c == 32 done = 1;
                     else if c == 64 done = 1;
+                    else if c == 34 done = 1;
                     else {
                         if c > 127 ok = 0;
                         i = i + 1;
