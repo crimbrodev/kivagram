@@ -3,6 +3,7 @@ extern printf
 extern exit
 extern strlen
 extern strcmp
+extern strtoull
 
 fails[1];
 buf[3];
@@ -67,7 +68,9 @@ main() {
     tg_buf_addnum(&numbuf, 0);
     tg_buf_addnum(&numbuf, 1234567);
     tg_buf_addnum(&numbuf, -42);
-    chk(strcmp(numbuf[0], "01234567-42") == 0, "addnum: 0/1234567/-42");
+    tg_buf_addnum(&numbuf, strtoull("5000000000", 0, 10));
+    chk(strcmp(numbuf[0], "01234567-425000000000") == 0,
+        "addnum: 0/1234567/-42/5000000000 (64-бит id > 2^31)");
 
     // рост буфера: 30 × 10 байт
     tg_buf_init(&bigbuf);

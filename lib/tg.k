@@ -120,11 +120,12 @@ tg_buf_add(b, s) {
     1;
 }
 
-// tg_buf_addnum(b, num): decimal через sprintf в scratch
+// tg_buf_addnum(b, num): decimal через sprintf в scratch.
+// NB: %ld — Kiva передаёт 64-бит слова, а реальные Telegram-id > 2^31
 tg_buf_addnum(b, num) {
     auto p;
     p = tg_scratch();
-    sprintf(p, "%d", num);
+    sprintf(p, "%ld", num);
     tg_buf_add(b, p);
 }
 
