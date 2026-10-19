@@ -1089,6 +1089,35 @@ tg_on_message(bot, name, fn) {
     tg_reg(bot, 0, name, &tg_flt_msg, fn);
 }
 
+// kind 4-10: обработчики новых типов апдейтов (см. tg_upd_kind)
+tg_on_edited(bot, name, fn) {
+    tg_reg(bot, 4, name, 0, fn);
+}
+
+tg_on_channel(bot, name, fn) {
+    tg_reg(bot, 5, name, 0, fn);
+}
+
+tg_on_membership(bot, name, fn) {
+    tg_reg(bot, 6, name, 0, fn);
+}
+
+tg_on_join_request(bot, name, fn) {
+    tg_reg(bot, 7, name, 0, fn);
+}
+
+tg_on_inline(bot, name, fn) {
+    tg_reg(bot, 8, name, 0, fn);
+}
+
+tg_on_payment(bot, name, fn) {
+    tg_reg(bot, 9, name, 0, fn);
+}
+
+tg_on_shipping(bot, name, fn) {
+    tg_reg(bot, 10, name, 0, fn);
+}
+
 // tg_upd_is_cmd(upd): kind=2-кандидат — entities.0 bot_command, offset 0,
 // первая сущность только ASCII (v1-guard: не-ASCII → обычный текст)
 tg_upd_is_cmd(upd) {
@@ -1126,7 +1155,15 @@ tg_upd_is_cmd(upd) {
     ok;
 }
 
-// tg_upd_kind(upd): классификация апдейта (см. правило матчинга v1)
+// tg_upd_kind(upd): классификация апдейта. Приоритет: callback_query (3) >
+// message (1/2) > остальные (4-10). Проверяются поля ВЕРХНЕГО уровня:
+//   0  — прочее (message без text, photo и т.п.)
+//   1  — message.text          2  — message-команда (entities.0 bot_command)
+//   3  — callback_query        4  — edited_message
+//   5  — channel_post ИЛИ edited_channel_post
+//   6  — my_chat_member        7  — chat_join_request
+//   8  — inline_query          9  — pre_checkout_query
+//   10 — shipping_query
 tg_upd_kind(upd) {
     auto kind;
     kind = 0;
@@ -1137,15 +1174,50 @@ tg_upd_kind(upd) {
             if tg_upd_is_cmd(upd) kind = 2;
         }
     }
+    if kind == 0 {
+        if tg_get(upd, "edited_message") != 0 kind = 4;
+    }
+    if kind == 0 {
+        if tg_get(upd, "channel_post") != 0 kind = 5;
+    }
+    if kind == 0 {
+        if tg_get(upd, "edited_channel_post") != 0 kind = 5;
+    }
+    if kind == 0 {
+        if tg_get(upd, "my_chat_member") != 0 kind = 6;
+    }
+    if kind == 0 {
+        if tg_get(upd, "chat_join_request") != 0 kind = 7;
+    }
+    if kind == 0 {
+        if tg_get(upd, "inline_query") != 0 kind = 8;
+    }
+    if kind == 0 {
+        if tg_get(upd, "pre_checkout_query") != 0 kind = 9;
+    }
+    if kind == 0 {
+        if tg_get(upd, "shipping_query") != 0 kind = 10;
+    }
     kind;
 }
 
 // ===== Context =====
 // Ctx-слот: 0 bot*, 1 upd_raw*, 2 kind, 3 chat_id, 4 msg_id, 5 from_id,
 // 6 from_name*, 7 text*, 8 command*, 9 target_bot*, 10 mine, 11 exclusive,
-// 12 args*, 13 cbq_id*, 14 cbq_data*, 15 inline_msg_id*, 16 strbuf*.
+// 12 args*, 13 cbq_id*, 14 cbq_data*, 15 inline_msg_id*, 16 strbuf*,
+// 17 business_connection_id* (v2).
 // strbuf — приватный строковый буфер (~8 КБ): слово 0 = позиция байт,
 // строки копируются с offset 8 — поля ctx стабильны всю диспетчеризацию.
+//
+// v2: у узких payload-апдейтов часть слотов ПЕРЕИСПОЛЬЗУЕТСЯ под их поля
+// (пустые в v1-смысле для этого kind), поэтому аксессоры читают слоты:
+//   kind 8 inline_query:      7 = query*        (tg_inline_query)
+//   kind 9 pre_checkout:     13 = id*           (tg_pcq_id)
+//   kind 10 shipping_query:  13 = id*           (tg_ship_id)
+//   kind 7 join_request:      3 = chat.id, 5 = from.id (tg_join_chat_id,
+//                             tg_join_user_id — те же слоты chat/from)
+// business_connection_id (слот 17) — верхний уровень апдейта любого kind,
+// заполняется при наличии.
 
 // tg_ctx_put(ctx, src): копия NUL-строки в strbuf ctx; возвращает указатель
 tg_ctx_put(ctx, src) {
@@ -1272,9 +1344,24 @@ tg_ctx_parse_cmd(ctx, t) {
     1;
 }
 
+// tg_pathbuf: ВРЕМЕННЫЙ dot-path "%s.%s" для tg_ctx_build (отдельно от
+// scratch — tg_get_str внутри ctx-сборки сбрасывает scratch). Пользоваться
+// СРАЗУ после tg_ctx_path, до следующего вызова.
+tg_pathbuf[64];   // 512 байт
+
+// tg_ctx_path(pre, field): "<pre>.<field>" в tg_pathbuf → указатель
+tg_ctx_path(pre, field) {
+    sprintf(&tg_pathbuf, "%s.%s", pre, field);
+    &tg_pathbuf;
+}
+
 // tg_ctx_build(bot, upd*): выделение слота + strbuf, извлечение полей с
 // копированием строк, разбор первой entities-команды (v1-guard: kind=2
-// требует offset==0 и только ASCII-байты — в tg_upd_is_cmd), mine/exclusive
+// требует offset==0 и только ASCII-байты — в tg_upd_is_cmd), mine/exclusive.
+// v2: префикс пути (pre) выбирается по kind — kind 4/5 берут поля из
+// edited_message.*/channel_post.*/edited_channel_post.*, kind 6/7/8/9/10 —
+// из своего payload-узла; kind 3 (callback_query) — ветка с вложенными
+// *.message.*-путями, как в v1. Слово 17 = business_connection_id.
 tg_ctx_build(bot, upd) {
     auto ctx;
     auto sb;
@@ -1282,9 +1369,10 @@ tg_ctx_build(bot, upd) {
     auto kind;
     auto t;
     auto s;
-    ctx = malloc(136);   // 17 слов
+    auto pre;
+    ctx = malloc(144);   // 18 слов (v2: + слово 17 business_connection_id*)
     i = 0;
-    while i < 17 {
+    while i < 18 {
         *(ctx + i*8) = 0;
         i = i + 1;
     }
@@ -1295,19 +1383,56 @@ tg_ctx_build(bot, upd) {
     ctx[1] = upd;
     kind = tg_upd_kind(upd);
     ctx[2] = kind;
-    ctx[3] = tg_get_num(upd, "message.chat.id");
-    ctx[4] = tg_get_num(upd, "message.message_id");
-    ctx[5] = tg_get_num(upd, "message.from.id");
-    ctx[6] = tg_ctx_getstr(ctx, upd, "message.from.first_name");
-    if kind != 3 {
-        ctx[7] = tg_ctx_getstr(ctx, upd, "message.text");
+    ctx[17] = tg_ctx_getstr(ctx, upd, "business_connection_id");
+    // префикс payload-пути по kind (kind 0/1/2 — message.*, kind 3 — ниже)
+    pre = "message";
+    if kind == 4 pre = "edited_message";
+    if kind == 5 {
+        pre = "channel_post";
+        if tg_get(upd, "channel_post") == 0 pre = "edited_channel_post";
+    }
+    if kind == 6 pre = "my_chat_member";
+    if kind == 7 pre = "chat_join_request";
+    if kind == 8 pre = "inline_query";
+    if kind == 9 pre = "pre_checkout_query";
+    if kind == 10 pre = "shipping_query";
+    if kind == 3 {
+        ctx[3] = tg_get_num(upd, "callback_query.message.chat.id");
+        ctx[4] = tg_get_num(upd, "callback_query.message.message_id");
+        ctx[5] = tg_get_num(upd, "callback_query.from.id");
+        ctx[6] = tg_ctx_getstr(ctx, upd, "callback_query.from.first_name");
+        ctx[13] = tg_ctx_getstr(ctx, upd, "callback_query.id");
+        ctx[14] = tg_ctx_getstr(ctx, upd, "callback_query.data");
+        ctx[15] = tg_ctx_getstr(ctx, upd, "callback_query.inline_message_id");
+    } else {
+        tg_ctx_path(pre, "chat.id");
+        ctx[3] = tg_get_num(upd, &tg_pathbuf);
+        tg_ctx_path(pre, "message_id");
+        ctx[4] = tg_get_num(upd, &tg_pathbuf);
+        tg_ctx_path(pre, "from.id");
+        ctx[5] = tg_get_num(upd, &tg_pathbuf);
+        tg_ctx_path(pre, "from.first_name");
+        ctx[6] = tg_ctx_getstr(ctx, upd, &tg_pathbuf);
+        tg_ctx_path(pre, "text");
+        ctx[7] = tg_ctx_getstr(ctx, upd, &tg_pathbuf);
+        if kind == 8 {
+            // query живёт в слоте text (у kind 8 текста сообщения нет)
+            ctx[7] = tg_ctx_getstr(ctx, upd, "inline_query.query");
+        }
+        if kind == 9 {
+            ctx[13] = tg_ctx_getstr(ctx, upd, "pre_checkout_query.id");
+        }
+        if kind == 10 {
+            ctx[13] = tg_ctx_getstr(ctx, upd, "shipping_query.id");
+        }
         if kind == 2 {
             tg_ctx_parse_cmd(ctx, ctx[7]);
         }
         t = ctx[9];
         if t == 0 {
             ctx[10] = 1;
-            s = tg_get_str(upd, "message.chat.type");
+            tg_ctx_path(pre, "chat.type");
+            s = tg_get_str(upd, &tg_pathbuf);
             if s != 0 {
                 if strcmp(s, "private") == 0 ctx[11] = 1;
             }
@@ -1320,15 +1445,6 @@ tg_ctx_build(bot, upd) {
                 }
             }
         }
-    }
-    if kind == 3 {
-        ctx[3] = tg_get_num(upd, "callback_query.message.chat.id");
-        ctx[4] = tg_get_num(upd, "callback_query.message.message_id");
-        ctx[5] = tg_get_num(upd, "callback_query.from.id");
-        ctx[6] = tg_ctx_getstr(ctx, upd, "callback_query.from.first_name");
-        ctx[13] = tg_ctx_getstr(ctx, upd, "callback_query.id");
-        ctx[14] = tg_ctx_getstr(ctx, upd, "callback_query.data");
-        ctx[15] = tg_ctx_getstr(ctx, upd, "callback_query.inline_message_id");
     }
     ctx;
 }
@@ -1360,6 +1476,14 @@ tg_exclusive(ctx) { ctx[11]; }
 tg_cbq_id(ctx) { ctx[13]; }
 tg_data(ctx) { ctx[14]; }
 tg_inline_msg_id(ctx) { ctx[15]; }
+
+// v2-аксессоры (см. схему переиспользования слотов в шапке Context)
+tg_inline_query(ctx) { ctx[7]; }      // kind 8: inline_query.query
+tg_join_chat_id(ctx) { ctx[3]; }      // kind 7: chat_join_request.chat.id
+tg_join_user_id(ctx) { ctx[5]; }      // kind 7: chat_join_request.from.id
+tg_pcq_id(ctx) { ctx[13]; }           // kind 9: pre_checkout_query.id
+tg_ship_id(ctx) { ctx[13]; }          // kind 10: shipping_query.id
+tg_business_conn(ctx) { ctx[17]; }    // business_connection_id (любой kind)
 
 tg_arg(ctx, n) {
     auto a;
@@ -1599,6 +1723,43 @@ tg_identify(bot) {
     }
 }
 
+// ===== allowed_updates =====
+// tg_allowed_upd — Buf-слот со списком полей allowed_updates в виде ГОТОВОГО
+// JSON-массива ("[" + "элемент" по кругу + "]"). По умолчанию пуст, в тело
+// getUpdates параметр НЕ передаётся (поведение v1 сохраняется).
+tg_allowed_upd[3];
+
+// tg_allow_updates_add(str): добавить поле в allowed_updates
+tg_allow_updates_add(str) {
+    auto e;
+    e = tg_json_escape(str);
+    if tg_allowed_upd[1] == 0 {
+        tg_buf_add(&tg_allowed_upd, "[");
+        tg_buf_add(&tg_allowed_upd, "\"");
+        tg_buf_add(&tg_allowed_upd, e);
+        tg_buf_add(&tg_allowed_upd, "\"]");
+    } else {
+        tg_allowed_upd[1] = tg_allowed_upd[1] - 1;   // снять ']'
+        tg_buf_add(&tg_allowed_upd, ",\"");
+        tg_buf_add(&tg_allowed_upd, e);
+        tg_buf_add(&tg_allowed_upd, "\"]");
+    }
+    1;
+}
+
+// tg_poll_params(offset): тело getUpdates — timeout + offset
+// [+ allowed_updates, если список непустой]; возврат — тело (Params-слот
+// tg_paramslot, живёт до следующего tg_params_reset)
+tg_poll_params(offset) {
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "timeout", 30);
+    tg_param_num(&tg_paramslot, "offset", offset);
+    if tg_allowed_upd[1] > 0 {
+        tg_param_json(&tg_paramslot, "allowed_updates", tg_allowed_upd[0]);
+    }
+    tg_params_done(&tg_paramslot);
+}
+
 // tg_polling(bot): identify → чтение offset → один deleteWebhook → цикл
 // getUpdates (timeout=30): по каждому апдейту — диспетчеризация, затем
 // offset = update_id+1 в слот и файл (at-least-once); пустой ответ — без
@@ -1625,10 +1786,7 @@ tg_polling(bot) {
     tg_call(bot, "deleteWebhook", 0);
     *(bot + 88) = 1;
     while *(bot + 88) == 1 {
-        tg_params_reset(&tg_paramslot);
-        tg_param_num(&tg_paramslot, "timeout", 30);
-        tg_param_num(&tg_paramslot, "offset", offset);
-        body = tg_params_done(&tg_paramslot);
+        body = tg_poll_params(offset);   // timeout+offset [+allowed_updates]
         r = tg_call(bot, "getUpdates", body);
         if r == 1 {
             hb = tg_http_body();
