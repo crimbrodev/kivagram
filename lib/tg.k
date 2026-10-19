@@ -743,8 +743,56 @@ tg_param_raw(b, key, val) {
     1;
 }
 
-// tg_params_done(b): убрать последнюю запятую, закрыть скобку; возврат — тело
+// ===== Extras ===== (wave-3): слот «экзотических» опциональных параметров.
+// Любая обёртка читает его внутри tg_params_done — без изменения сигнатур.
+// Контракт: extras применяются к СЛЕДУЮЩЕМУ вызову обёртки и съедаются
+// автоматически; tg_call напрямую extras НЕ читает (только через
+// tg_params_done). Вызывающий обязан сделать tg_ex_reset() сам, если
+// накопленное не должно уйти в следующий вызов.
+tg_extraslot[3];        // Buf: готовые "key":value, -фрагменты
+
+// tg_ex_reset(): сброс слота extras
+tg_ex_reset() {
+    tg_buf_reset(&tg_extraslot);
+    1;
+}
+
+// тонкие обёртки tg_param_* над &tg_extraslot
+tg_ex_str(key, val) {
+    tg_param_str(&tg_extraslot, key, val);
+}
+
+tg_ex_num(key, n) {
+    tg_param_num(&tg_extraslot, key, n);
+}
+
+tg_ex_json(key, json) {
+    tg_param_json(&tg_extraslot, key, json);
+}
+
+tg_ex_raw(key, lit) {
+    tg_param_raw(&tg_extraslot, key, lit);
+}
+
+// tg_params_done(b): слить extras (если есть) перед закрывающей скобкой,
+// снять последнюю запятую, закрыть скобку; возврат — тело.
+// tg_params_reset всегда пишет "{", поэтому b[1] <= 1 — тело пусто.
 tg_params_done(b) {
+    if tg_extraslot[1] > 0 {
+        if b[1] > 1 {
+            // тело непустое: снять последнюю запятую, затем ",", extras как есть
+            if @8 *(b[0] + b[1] - 1) == 44 {
+                b[1] = b[1] - 1;
+                *(b[0] + b[1]) !8 0;
+            }
+            tg_buf_add(b, ",");
+            tg_buf_add(b, tg_extraslot[0]);
+        } else {
+            // слот пуст ("{" или ещё нет) — extras как есть
+            tg_buf_add(b, tg_extraslot[0]);
+        }
+        tg_ex_reset();
+    }
     if b[1] > 0 {
         if @8 *(b[0] + b[1] - 1) == 44 {
             b[1] = b[1] - 1;
@@ -816,6 +864,128 @@ tg_http_post(url, body) {
     ok;
 }
 
+// ===== Multipart (wave-3) =====
+// tg_mpslot — накопленные -F фрагменты для tg_call_mp; каждый фрагмент вида
+// "-F 'key=value' " (с пробелом-разделителем). Эскейп ОБЯЗАТЕЛЕН: ' в
+// значении/пути → '\'' (закрыть кавычку, экранированная кавычка, открыть) —
+// иначе инъекция в shell-команду curl. tg_mf_file НЕ проверяет существование
+// файла — curl сам вернёт ошибку.
+tg_mpslot[3];       // Buf: фрагменты -F
+tg_mpesc[2048];     // 16 КБ — собираемый фрагмент (вне scratch/httpresp)
+tg_mpnum[16];       // 128 байт — число для tg_mf_num (вне scratch)
+
+// tg_mp_reset(): сброс слота форм
+tg_mp_reset() {
+    tg_buf_reset(&tg_mpslot);
+    1;
+}
+
+// tg_mf_build(key, val, isfile): "-F 'key=val' " (isfile → "-F 'key=@val' ")
+// с эскейпом ' в tg_mpesc, затем копия в tg_mpslot
+tg_mf_build(key, val, isfile) {
+    auto p;
+    auto lim;
+    auto c;
+    auto done;
+    p = &tg_mpesc;
+    lim = &tg_mpesc + 16000;
+    *p !8 45;               // '-'
+    *(p+1) !8 70;           // 'F'
+    *(p+2) !8 32;           // ' '
+    *(p+3) !8 39;           // opening '
+    p = p + 4;
+    c = @8 *key;
+    done = 0;
+    while done == 0 {
+        if c == 0 done = 1;
+        else if p >= lim done = 1;
+        else {
+            *p !8 c;
+            p = p + 1;
+            key = key + 1;
+            c = @8 *key;
+        }
+    }
+    *p !8 61;               // '='
+    p = p + 1;
+    if isfile == 1 {
+        *p !8 64;           // '@'
+        p = p + 1;
+    }
+    c = @8 *val;
+    done = 0;
+    while done == 0 {
+        if c == 0 done = 1;
+        else if p >= lim done = 1;
+        else {
+            if c == 39 {
+                *p !8 39;   // закрыть кавычку
+                *(p+1) !8 92;   // экранированная кавычка
+                *(p+2) !8 39;
+                *(p+3) !8 39;   // открыть кавычку снова
+                p = p + 4;
+            } else {
+                *p !8 c;
+                p = p + 1;
+            }
+            val = val + 1;
+            c = @8 *val;
+        }
+    }
+    *p !8 39;               // closing '
+    *(p+1) !8 32;           // пробел-разделитель
+    *(p+2) !8 0;
+    tg_buf_add(&tg_mpslot, &tg_mpesc);
+    1;
+}
+
+// tg_mf_str(key, val): -F 'key=val'
+tg_mf_str(key, val) {
+    tg_mf_build(key, val, 0);
+}
+
+// tg_mf_num(key, n): -F 'key=n' (число через %ld в выделенный буфер)
+tg_mf_num(key, n) {
+    sprintf(&tg_mpnum, "%ld", n);
+    tg_mf_build(key, &tg_mpnum, 0);
+}
+
+// tg_mf_file(key, path): -F 'key=@path'
+tg_mf_file(key, path) {
+    tg_mf_build(key, path, 1);
+}
+
+// tg_http_mp(url): curl -F из tg_mpslot на url — тот же транспорт, что
+// tg_http_post, но форма передаётся аргументами -F, тела нет.
+tg_http_mp(url) {
+    auto f;
+    auto st;
+    auto ok;
+    auto fs;
+    tg_http_last_ok = 0;
+    tg_http_curlcode = 99;
+    ok = 0;
+    fs = tg_mpslot[0];
+    if tg_mpslot[1] == 0 fs = "";
+    strcpy(&httpurl, url);
+    sprintf(tg_scratch(), "curl -s -m 35 %s '%s'", fs, &httpurl);
+    f = popen(&scratchbuf, "r");
+    if f != 0 {
+        tg_buf_reset(&httpresp);
+        while fgets(&readbuf, 512, f) tg_buf_add(&httpresp, &readbuf);
+        st = pclose(f);
+        tg_http_curlcode = (st >> 8) & 255;
+        if tg_http_curlcode == 0 {
+            ok = 1;
+            tg_http_last_ok = 1;
+        }
+    }
+    ok;
+}
+
+// tg_http_get_file перенесена после tg_compose_body (нужен tg_dry_run —
+// порядок определений Kiva).
+
 // ===== API call =====
 
 // tg_default_on_error(bot, method, code, desc): дефолтный принтер ошибок
@@ -846,21 +1016,97 @@ tg_compose_body(bot, method, params) {
     &tg_composed;
 }
 
-// tg_call(bot, method, params*|0): вызов Bot API. params==0 → пустое тело.
-// 429 → on_error + sleep(retry_after), максимум 3 попытки. Возврат 1 — ok:true.
-// dry-режим: композиция готова в tg_composed, HTTP пропускается, возврат 1.
-tg_call(bot, method, params) {
+// tg_http_get_file(url, dest): curl -s -m 60 -o <dest> '<url>';
+// возврат 1 при curl exit 0. dry-режим: в tg_composed пишется "GET <url>"
+// (композиция URL — для проверки цепочки getFile → download без сети).
+tg_http_get_file(url, dest) {
+    auto f;
+    auto st;
+    auto ok;
+    tg_http_last_ok = 0;
+    tg_http_curlcode = 99;
+    ok = 0;
+    strcpy(&httpurl, url);
+    if tg_dry_run == 1 {
+        sprintf(&tg_composed, "GET %s", &httpurl);
+        ok = 1;
+    } else {
+        sprintf(tg_scratch(), "curl -s -m 60 -o '%s' '%s'", dest, &httpurl);
+        f = popen(&scratchbuf, "r");
+        if f != 0 {
+            tg_buf_reset(&httpresp);
+            while fgets(&readbuf, 512, f) tg_buf_add(&httpresp, &readbuf);
+            st = pclose(f);
+            tg_http_curlcode = (st >> 8) & 255;
+            if tg_http_curlcode == 0 {
+                ok = 1;
+                tg_http_last_ok = 1;
+            }
+        }
+    }
+    ok;
+}
+
+// tg_call_dispatch(bot, method, url, body, mode): ОБЩИЙ цикл обработки
+// ответа для tg_call и tg_call_mp (ретраи не дублируются).
+//   mode 0 — POST body (tg_http_post); mode 1 — multipart из tg_mpslot;
+//   ok:true → 1; ошибка API → on_error, 429 → sleep(retry_after) и до 3
+//   попыток, иное — стоп; transport error → on_error + стоп.
+tg_call_dispatch(bot, method, url, body, mode) {
     auto attempt;
     auto ok;
     auto oe;
     auto code;
     auto desc;
     auto retry;
+    attempt = 0;
+    ok = 0;
+    while attempt < 3 {
+        if mode == 0 {
+            tg_http_post(url, body);
+        } else {
+            tg_http_mp(url);
+        }
+        if tg_http_last_ok {
+            if tg_get_bool(tg_http_body(), "ok") {
+                ok = 1;
+                attempt = 3;
+            } else {
+                code = tg_get_num(tg_http_body(), "error_code");
+                desc = tg_get_str(tg_http_body(), "description");
+                if desc == 0 desc = "no description";
+                oe = bot[7];
+                oe(bot, method, code, desc);
+                if code == 429 {
+                    retry = tg_get_num(tg_http_body(), "parameters.retry_after");
+                    if retry > 0 {
+                        sleep(retry);
+                    } else {
+                        sleep(1);
+                    }
+                    attempt = attempt + 1;
+                } else {
+                    attempt = 3;
+                }
+            }
+        } else {
+            oe = bot[7];
+            oe(bot, method, tg_http_curlcode, "transport error");
+            attempt = 3;
+        }
+    }
+    ok;
+}
+
+// tg_call(bot, method, params*|0): вызов Bot API. params==0 → пустое тело.
+// 429 → on_error + sleep(retry_after), максимум 3 попытки. Возврат 1 — ok:true.
+// dry-режим: композиция готова в tg_composed, HTTP пропускается, возврат 1.
+tg_call(bot, method, params) {
+    auto ok;
     auto url;
     auto body;
     auto i;
     auto c;
-    attempt = 0;
     ok = 0;
     tg_compose_body(bot, method, params);
     if tg_dry_run == 1 {
@@ -878,38 +1124,78 @@ tg_call(bot, method, params) {
         *(&tg_composed + i) !8 0;
         body = &tg_composed;
         body = body + i + 1;
-        while attempt < 3 {
-            tg_http_post(url, body);
-            if tg_http_last_ok {
-                if tg_get_bool(tg_http_body(), "ok") {
-                    ok = 1;
-                    attempt = 3;
-                } else {
-                    code = tg_get_num(tg_http_body(), "error_code");
-                    desc = tg_get_str(tg_http_body(), "description");
-                    if desc == 0 desc = "no description";
-                    oe = bot[7];
-                    oe(bot, method, code, desc);
-                    if code == 429 {
-                        retry = tg_get_num(tg_http_body(), "parameters.retry_after");
-                        if retry > 0 {
-                            sleep(retry);
-                        } else {
-                            sleep(1);
-                        }
-                        attempt = attempt + 1;
-                    } else {
-                        attempt = 3;
-                    }
-                }
-            } else {
-                oe = bot[7];
-                oe(bot, method, tg_http_curlcode, "transport error");
-                attempt = 3;
+        ok = tg_call_dispatch(bot, method, url, body, 0);
+    }
+    ok;
+}
+
+// tg_call_mp(bot, method): multipart-вызов — тело НЕ передаётся; строковые
+// и файловые поля накапливаются вызывающим в tg_mpslot через tg_mf_*.
+// URL композируется как tg_compose_body с пустым телом, отправка —
+// curl -F (tg_http_mp), обработка ответа — tg_call_dispatch (как в tg_call).
+// dry-режим: в tg_composed пишется "<url>|MP <-F фрагменты>".
+tg_call_mp(bot, method) {
+    auto ok;
+    auto url;
+    auto i;
+    auto c;
+    auto n;
+    ok = 0;
+    if tg_dry_run == 1 {
+        n = sprintf(&tg_composed, "%s/bot%s/%s|MP ", bot[1], bot[0], method);
+        if tg_mpslot[1] > 0 {
+            strcpy(&tg_composed + n, tg_mpslot[0]);
+        } else {
+            *(&tg_composed + n) !8 0;
+        }
+        ok = 1;
+    }
+    if tg_dry_run == 0 {
+        tg_compose_body(bot, method, 0);
+        url = &tg_composed;
+        i = 0;
+        c = @8 *url;
+        while c != 124 {
+            i = i + 1;
+            c = @8 *(url + i);
+        }
+        *(&tg_composed + i) !8 0;
+        ok = tg_call_dispatch(bot, method, url, 0, 1);
+    }
+    ok;
+}
+
+tg_fpath[256];    // 2048 байт — result.file_path последнего getFile
+tg_fileurl[64];   // 512 байт — URL скачивания <base>/file/bot<token>/<path>
+
+// tg_get_file(bot, file_id): tg_call getFile → копия result.file_path в
+// tg_fpath; возврат — указатель (стабилен до следующего вызова) или 0
+// (в dry-режиме ответа нет → 0, но композиция URL/тела готова в tg_composed)
+tg_get_file(bot, file_id) {
+    auto body;
+    auto p;
+    auto r;
+    r = 0;
+    tg_params_reset(&tg_paramslot);
+    tg_param_str(&tg_paramslot, "file_id", file_id);
+    body = tg_params_done(&tg_paramslot);
+    if tg_call(bot, "getFile", body) == 1 {
+        p = tg_http_body();
+        if p != 0 {
+            p = tg_get_str(p, "result.file_path");
+            if p != 0 {
+                strcpy(&tg_fpath, p);
+                r = &tg_fpath;
             }
         }
     }
-    ok;
+    r;
+}
+
+// tg_download_file(bot, file_path, dest): URL = <base_url>/file/bot<token>/<path>
+tg_download_file(bot, file_path, dest) {
+    sprintf(&tg_fileurl, "%s/file/bot%s/%s", bot[1], bot[0], file_path);
+    tg_http_get_file(&tg_fileurl, dest);
 }
 
 // ===== Bot & registry & dispatch =====
@@ -1089,7 +1375,7 @@ tg_on_message(bot, name, fn) {
     tg_reg(bot, 0, name, &tg_flt_msg, fn);
 }
 
-// kind 4-10: обработчики новых типов апдейтов (см. tg_upd_kind)
+// kind 4-12: обработчики новых типов апдейтов (см. tg_upd_kind)
 tg_on_edited(bot, name, fn) {
     tg_reg(bot, 4, name, 0, fn);
 }
@@ -1116,6 +1402,15 @@ tg_on_payment(bot, name, fn) {
 
 tg_on_shipping(bot, name, fn) {
     tg_reg(bot, 10, name, 0, fn);
+}
+
+// kind 11-12: бизнес-сообщения (wave-3); business_connection_id — слот 17
+tg_on_business(bot, name, fn) {
+    tg_reg(bot, 11, name, 0, fn);
+}
+
+tg_on_business_edited(bot, name, fn) {
+    tg_reg(bot, 12, name, 0, fn);
 }
 
 // tg_upd_is_cmd(upd): kind=2-кандидат — entities.0 bot_command, offset 0,
@@ -1163,7 +1458,8 @@ tg_upd_is_cmd(upd) {
 //   5  — channel_post ИЛИ edited_channel_post
 //   6  — my_chat_member        7  — chat_join_request
 //   8  — inline_query          9  — pre_checkout_query
-//   10 — shipping_query
+//   10 — shipping_query       11  — business_message
+//   12 — edited_business_message
 tg_upd_kind(upd) {
     auto kind;
     kind = 0;
@@ -1197,6 +1493,12 @@ tg_upd_kind(upd) {
     }
     if kind == 0 {
         if tg_get(upd, "shipping_query") != 0 kind = 10;
+    }
+    if kind == 0 {
+        if tg_get(upd, "business_message") != 0 kind = 11;
+    }
+    if kind == 0 {
+        if tg_get(upd, "edited_business_message") != 0 kind = 12;
     }
     kind;
 }
@@ -1362,6 +1664,8 @@ tg_ctx_path(pre, field) {
 // edited_message.*/channel_post.*/edited_channel_post.*, kind 6/7/8/9/10 —
 // из своего payload-узла; kind 3 (callback_query) — ветка с вложенными
 // *.message.*-путями, как в v1. Слово 17 = business_connection_id.
+// wave-3: kind 11/12 — бизнес-сообщения, пути business_message.* /
+// edited_business_message.* (ctx как у kind 1/4).
 tg_ctx_build(bot, upd) {
     auto ctx;
     auto sb;
@@ -1396,6 +1700,8 @@ tg_ctx_build(bot, upd) {
     if kind == 8 pre = "inline_query";
     if kind == 9 pre = "pre_checkout_query";
     if kind == 10 pre = "shipping_query";
+    if kind == 11 pre = "business_message";
+    if kind == 12 pre = "edited_business_message";
     if kind == 3 {
         ctx[3] = tg_get_num(upd, "callback_query.message.chat.id");
         ctx[4] = tg_get_num(upd, "callback_query.message.message_id");
