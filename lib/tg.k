@@ -1413,6 +1413,67 @@ tg_on_business_edited(bot, name, fn) {
     tg_reg(bot, 12, name, 0, fn);
 }
 
+// kind 13-27: обработчики остальных типов апдейтов (см. tg_upd_kind)
+tg_on_business_connection(bot, name, fn) {
+    tg_reg(bot, 13, name, 0, fn);
+}
+
+tg_on_deleted_business_messages(bot, name, fn) {
+    tg_reg(bot, 14, name, 0, fn);
+}
+
+tg_on_guest(bot, name, fn) {
+    tg_reg(bot, 15, name, 0, fn);
+}
+
+tg_on_reaction(bot, name, fn) {
+    tg_reg(bot, 16, name, 0, fn);
+}
+
+tg_on_reaction_count(bot, name, fn) {
+    tg_reg(bot, 17, name, 0, fn);
+}
+
+tg_on_chosen_inline(bot, name, fn) {
+    tg_reg(bot, 18, name, 0, fn);
+}
+
+tg_on_paid_media(bot, name, fn) {
+    tg_reg(bot, 19, name, 0, fn);
+}
+
+tg_on_poll(bot, name, fn) {
+    tg_reg(bot, 20, name, 0, fn);
+}
+
+tg_on_poll_answer(bot, name, fn) {
+    tg_reg(bot, 21, name, 0, fn);
+}
+
+tg_on_chat_member(bot, name, fn) {
+    tg_reg(bot, 22, name, 0, fn);
+}
+
+tg_on_chat_boost(bot, name, fn) {
+    tg_reg(bot, 23, name, 0, fn);
+}
+
+tg_on_boost_removed(bot, name, fn) {
+    tg_reg(bot, 24, name, 0, fn);
+}
+
+tg_on_managed_bot(bot, name, fn) {
+    tg_reg(bot, 25, name, 0, fn);
+}
+
+tg_on_subscription(bot, name, fn) {
+    tg_reg(bot, 26, name, 0, fn);
+}
+
+tg_on_stopped_generation(bot, name, fn) {
+    tg_reg(bot, 27, name, 0, fn);
+}
+
 // tg_upd_is_cmd(upd): kind=2-кандидат — entities.0 bot_command, offset 0,
 // первая сущность только ASCII (v1-guard: не-ASCII → обычный текст)
 tg_upd_is_cmd(upd) {
@@ -1460,6 +1521,13 @@ tg_upd_is_cmd(upd) {
 //   8  — inline_query          9  — pre_checkout_query
 //   10 — shipping_query       11  — business_message
 //   12 — edited_business_message
+//   13 — business_connection  14  — deleted_business_messages
+//   15 — guest_message        16  — message_reaction
+//   17 — message_reaction_count                18 — chosen_inline_result
+//   19 — purchased_paid_media 20  — poll       21 — poll_answer
+//   22 — chat_member          23  — chat_boost 24 — removed_chat_boost
+//   25 — managed_bot          26  — subscription
+//   27 — stopped_message_generation
 tg_upd_kind(upd) {
     auto kind;
     kind = 0;
@@ -1500,6 +1568,51 @@ tg_upd_kind(upd) {
     if kind == 0 {
         if tg_get(upd, "edited_business_message") != 0 kind = 12;
     }
+    if kind == 0 {
+        if tg_get(upd, "business_connection") != 0 kind = 13;
+    }
+    if kind == 0 {
+        if tg_get(upd, "deleted_business_messages") != 0 kind = 14;
+    }
+    if kind == 0 {
+        if tg_get(upd, "guest_message") != 0 kind = 15;
+    }
+    if kind == 0 {
+        if tg_get(upd, "message_reaction") != 0 kind = 16;
+    }
+    if kind == 0 {
+        if tg_get(upd, "message_reaction_count") != 0 kind = 17;
+    }
+    if kind == 0 {
+        if tg_get(upd, "chosen_inline_result") != 0 kind = 18;
+    }
+    if kind == 0 {
+        if tg_get(upd, "purchased_paid_media") != 0 kind = 19;
+    }
+    if kind == 0 {
+        if tg_get(upd, "poll") != 0 kind = 20;
+    }
+    if kind == 0 {
+        if tg_get(upd, "poll_answer") != 0 kind = 21;
+    }
+    if kind == 0 {
+        if tg_get(upd, "chat_member") != 0 kind = 22;
+    }
+    if kind == 0 {
+        if tg_get(upd, "chat_boost") != 0 kind = 23;
+    }
+    if kind == 0 {
+        if tg_get(upd, "removed_chat_boost") != 0 kind = 24;
+    }
+    if kind == 0 {
+        if tg_get(upd, "managed_bot") != 0 kind = 25;
+    }
+    if kind == 0 {
+        if tg_get(upd, "subscription") != 0 kind = 26;
+    }
+    if kind == 0 {
+        if tg_get(upd, "stopped_message_generation") != 0 kind = 27;
+    }
     kind;
 }
 
@@ -1518,8 +1631,23 @@ tg_upd_kind(upd) {
 //   kind 10 shipping_query:  13 = id*           (tg_ship_id)
 //   kind 7 join_request:      3 = chat.id, 5 = from.id (tg_join_chat_id,
 //                             tg_join_user_id — те же слоты chat/from)
+//   kind 13 business_connection: 3 = user_chat_id (tg_chat_id), 5/6 =
+//                             user.id/first_name, 17 = id (tg_business_conn)
+//   kind 14 deleted_business_messages: 3 = chat.id, 17 = business_connection_id
+//   kind 15 guest_message:   13 = guest_query_id* (tg_guest_query_id)
+//   kind 18 chosen_inline:   7 = query*, 15 = inline_message_id*
+//   kind 19 paid_media:     14 = paid_media_payload* (tg_paid_payload)
+//   kind 20 poll:            7 = question*      (tg_text)
+//   kind 21 poll_answer:    13 = poll_id* (tg_poll_answer_poll_id),
+//                             7 = option_ids* — сырой JSON-массив
+//                             (tg_poll_answer_ids), 3 = voter_chat.id
+//   kind 23 chat_boost:     13 = boost_id* (tg_boost_id), 7 = source*
+//                             (tg_boost_source), 3 = chat.id
+//   kind 24 removed_chat_boost: 13 = boost_id*, 7 = source*, 3 = chat.id
+// managed_bot/subscription: 5/6 = user.id/first_name (from-слоты);
+// stopped_message_generation: 3 = chat.id (стандартные пути).
 // business_connection_id (слот 17) — верхний уровень апдейта любого kind,
-// заполняется при наличии.
+// заполняется при наличии; kind 13/14 — из своих payload-путей.
 
 // tg_ctx_put(ctx, src): копия NUL-строки в strbuf ctx; возвращает указатель
 tg_ctx_put(ctx, src) {
@@ -1552,6 +1680,49 @@ tg_ctx_getstr(ctx, upd, path) {
     s = tg_get_str(upd, path);
     if s != 0 r = tg_ctx_put(ctx, s);
     r;
+}
+
+// tg_ctx_getraw(ctx, upd, path): сырой фрагмент значения (например
+// JSON-массив вида [0,2]) → копия в strbuf ctx; 0 если пути нет или
+// значение не массив. Вложенные массивы учитываются по глубине скобок.
+tg_ctx_getraw(ctx, upd, path) {
+    auto r;
+    auto e;
+    auto p;
+    auto c;
+    auto d;
+    auto sb;
+    auto done;
+    auto out;
+    out = 0;
+    r = tg_get(upd, path);
+    if r != 0 {
+        if @8 *r == 91 {
+            sb = ctx[16];
+            p = sb + *sb;
+            out = p;
+            e = r;
+            d = 0;
+            done = 0;
+            while done == 0 {
+                c = @8 *e;
+                if c == 0 done = 1;
+                else {
+                    *p !8 c;
+                    p = p + 1;
+                    if c == 91 d = d + 1;
+                    if c == 93 {
+                        d = d - 1;
+                        if d == 0 done = 1;
+                    }
+                    e = e + 1;
+                }
+            }
+            *p !8 0;
+            *sb = (p - sb) + 1;
+        }
+    }
+    out;
 }
 
 // tg_ctx_parse_cmd(ctx, t): разбор скопированного текста kind==2:
@@ -1666,6 +1837,8 @@ tg_ctx_path(pre, field) {
 // *.message.*-путями, как в v1. Слово 17 = business_connection_id.
 // wave-3: kind 11/12 — бизнес-сообщения, пути business_message.* /
 // edited_business_message.* (ctx как у kind 1/4).
+// v3: kind 13-27 — префикс = имя поля апдейта; перекрытия слотов — в блоке
+// «v3 (kind 13-27)» ниже и в схеме Context в шапке.
 tg_ctx_build(bot, upd) {
     auto ctx;
     auto sb;
@@ -1702,6 +1875,21 @@ tg_ctx_build(bot, upd) {
     if kind == 10 pre = "shipping_query";
     if kind == 11 pre = "business_message";
     if kind == 12 pre = "edited_business_message";
+    if kind == 13 pre = "business_connection";
+    if kind == 14 pre = "deleted_business_messages";
+    if kind == 15 pre = "guest_message";
+    if kind == 16 pre = "message_reaction";
+    if kind == 17 pre = "message_reaction_count";
+    if kind == 18 pre = "chosen_inline_result";
+    if kind == 19 pre = "purchased_paid_media";
+    if kind == 20 pre = "poll";
+    if kind == 21 pre = "poll_answer";
+    if kind == 22 pre = "chat_member";
+    if kind == 23 pre = "chat_boost";
+    if kind == 24 pre = "removed_chat_boost";
+    if kind == 25 pre = "managed_bot";
+    if kind == 26 pre = "subscription";
+    if kind == 27 pre = "stopped_message_generation";
     if kind == 3 {
         ctx[3] = tg_get_num(upd, "callback_query.message.chat.id");
         ctx[4] = tg_get_num(upd, "callback_query.message.message_id");
@@ -1733,6 +1921,68 @@ tg_ctx_build(bot, upd) {
         }
         if kind == 2 {
             tg_ctx_parse_cmd(ctx, ctx[7]);
+        }
+        // v3 (kind 13-27): поля, чьи payload-пути не совпадают со стандартной
+        // схемой <field>.chat.id / .from.id / .text — перекрытие слотов
+        if kind == 13 {
+            // chat = user_chat_id, from = user, бизнес-слот 17 = id
+            ctx[3] = tg_get_num(upd, "business_connection.user_chat_id");
+            ctx[5] = tg_get_num(upd, "business_connection.user.id");
+            ctx[6] = tg_ctx_getstr(ctx, upd,
+                "business_connection.user.first_name");
+            ctx[17] = tg_ctx_getstr(ctx, upd, "business_connection.id");
+        }
+        if kind == 14 {
+            // chat.id из стандартного пути; слот 17 из payload
+            ctx[17] = tg_ctx_getstr(ctx, upd,
+                "deleted_business_messages.business_connection_id");
+        }
+        if kind == 15 {
+            ctx[13] = tg_ctx_getstr(ctx, upd, "guest_message.guest_query_id");
+        }
+        if kind == 16 {
+            // анонимная реакция может быть от actor_chat — from = user
+            ctx[5] = tg_get_num(upd, "message_reaction.user.id");
+        }
+        if kind == 18 {
+            ctx[7] = tg_ctx_getstr(ctx, upd, "chosen_inline_result.query");
+            ctx[15] = tg_ctx_getstr(ctx, upd,
+                "chosen_inline_result.inline_message_id");
+        }
+        if kind == 19 {
+            ctx[14] = tg_ctx_getstr(ctx, upd,
+                "purchased_paid_media.paid_media_payload");
+        }
+        if kind == 20 {
+            ctx[7] = tg_ctx_getstr(ctx, upd, "poll.question");
+        }
+        if kind == 21 {
+            ctx[3] = tg_get_num(upd, "poll_answer.voter_chat.id");
+            ctx[5] = tg_get_num(upd, "poll_answer.user.id");
+            ctx[6] = tg_ctx_getstr(ctx, upd, "poll_answer.user.first_name");
+            ctx[13] = tg_ctx_getstr(ctx, upd, "poll_answer.poll_id");
+            ctx[7] = tg_ctx_getraw(ctx, upd, "poll_answer.option_ids");
+        }
+        if kind == 23 {
+            ctx[5] = tg_get_num(upd, "chat_boost.boost.source.user.id");
+            ctx[13] = tg_ctx_getstr(ctx, upd, "chat_boost.boost.boost_id");
+            ctx[7] = tg_ctx_getstr(ctx, upd, "chat_boost.boost.source.source");
+        }
+        if kind == 24 {
+            ctx[5] = tg_get_num(upd, "removed_chat_boost.source.user.id");
+            ctx[13] = tg_ctx_getstr(ctx, upd, "removed_chat_boost.boost_id");
+            ctx[7] = tg_ctx_getstr(ctx, upd,
+                "removed_chat_boost.source.source");
+        }
+        if kind == 25 {
+            // from = user (создатель), бот — в managed_bot.bot
+            ctx[5] = tg_get_num(upd, "managed_bot.user.id");
+            ctx[6] = tg_ctx_getstr(ctx, upd, "managed_bot.user.first_name");
+        }
+        if kind == 26 {
+            // from = user (подписчик)
+            ctx[5] = tg_get_num(upd, "subscription.user.id");
+            ctx[6] = tg_ctx_getstr(ctx, upd, "subscription.user.first_name");
         }
         t = ctx[9];
         if t == 0 {
@@ -1790,6 +2040,15 @@ tg_join_user_id(ctx) { ctx[5]; }      // kind 7: chat_join_request.from.id
 tg_pcq_id(ctx) { ctx[13]; }           // kind 9: pre_checkout_query.id
 tg_ship_id(ctx) { ctx[13]; }          // kind 10: shipping_query.id
 tg_business_conn(ctx) { ctx[17]; }    // business_connection_id (любой kind)
+
+// v3-аксессоры (kind 13-27; слоты переиспользуются — см. схему Context)
+tg_guest_query_id(ctx) { ctx[13]; }    // kind 15: guest_message.guest_query_id
+tg_poll_answer_poll_id(ctx) { ctx[13]; } // kind 21: poll_answer.poll_id
+tg_poll_answer_ids(ctx) { ctx[7]; }    // kind 21: option_ids (сырой массив)
+tg_boost_chat_id(ctx) { ctx[3]; }      // kind 23/24: chat.id
+tg_boost_id(ctx) { ctx[13]; }          // kind 23/24: boost_id
+tg_boost_source(ctx) { ctx[7]; }       // kind 23/24: source.source
+tg_paid_payload(ctx) { ctx[14]; }      // kind 19: paid_media_payload
 
 tg_arg(ctx, n) {
     auto a;
