@@ -113,6 +113,66 @@ tg_json_escape(src) {
     &tg_escbuf;
 }
 
+// tg_htescbuf: СОБСТВЕННЫЙ статический буфер HTML-эскейпа — ни scratch, ни
+// tg_escbuf (тот занят json-эскейпом параметров). Один активный эскейп за
+// раз: результат перезаписывается следующим вызовом tg_html_escape.
+tg_htescbuf[4096];   // 32 КБ (текст ≤4096 × 6 на худший случай)
+tg_htescpos;
+
+// tg_htb_b(c): дописать байт в HTML-escape-буфер (с отсечкой по границе —
+// семантика как у tg_eb_b)
+tg_htb_b(c) {
+    if tg_htescpos < 32766 {
+        *(&tg_htescbuf+tg_htescpos) !8 c;
+        tg_htescpos = tg_htescpos + 1;
+    }
+    1;
+}
+
+// tg_html_escape(src): экранировать src как HTML-текстовый узел, дописать
+// в tg_htescbuf, вернуть указатель. & → &amp; (ПЕРВЫМ — раньше остальных
+// замен), < → &lt;, > → &gt;. Кавычки НЕ эскейпятся (текст в текстовом
+// узле, не атрибут). Вызывающий отвечает за валидность результата.
+// Переполнение — как в tg_json_escape: чтение обрывается при
+// tg_htescpos > 32700, запись отсекается на 32766 (результат усечётся).
+tg_html_escape(src) {
+    auto i;
+    auto c;
+    auto done;
+    i = 0;
+    tg_htescpos = 0;
+    done = 0;
+    while done == 0 {
+        c = @8 *(src+i);
+        if c == 0 done = 1;
+        else if tg_htescpos > 32700 done = 1;
+        else {
+            if c == 38 {          // & → &amp; первым, до остальных замен
+                tg_htb_b(38);
+                tg_htb_b(97);
+                tg_htb_b(109);
+                tg_htb_b(112);
+                tg_htb_b(59);
+            } else if c == 60 {   // < → &lt;
+                tg_htb_b(38);
+                tg_htb_b(108);
+                tg_htb_b(116);
+                tg_htb_b(59);
+            } else if c == 62 {   // > → &gt;
+                tg_htb_b(38);
+                tg_htb_b(103);
+                tg_htb_b(116);
+                tg_htb_b(59);
+            } else {
+                tg_htb_b(c);
+            }
+            i = i + 1;
+        }
+    }
+    *(&tg_htescbuf+tg_htescpos) !8 0;
+    &tg_htescbuf;
+}
+
 // Buf-слот: слова 0 ptr*, 1 len, 2 cap. Поверх malloc, рост ×2.
 // Передаётся как &слот.
 
@@ -664,6 +724,21 @@ tg_param_json(b, key, json) {
     tg_buf_add(b, tg_json_escape(key));
     tg_buf_add(b, "\":");
     tg_buf_add(b, json);
+    tg_buf_add(b, ",");
+    1;
+}
+
+// tg_param_raw(b, key, val): "key":<val как есть> + , — как tg_param_num,
+// но value подставляется строкой ЦЕЛИКОМ: БЕЗ кавычек и БЕЗ json-эскейпа
+// (обычное копирование байтов до NUL, как в tg_param_str, но без обёртки).
+// Нужно для дробных чисел (latitude=55.75), литералов true/false/null и
+// готовых JSON-кусков. ВНИМАНИЕ: значение вставляется как есть — вызывающий
+// отвечает за валидность JSON.
+tg_param_raw(b, key, val) {
+    tg_buf_add(b, "\"");
+    tg_buf_add(b, tg_json_escape(key));
+    tg_buf_add(b, "\":");
+    tg_buf_add(b, val);
     tg_buf_add(b, ",");
     1;
 }
