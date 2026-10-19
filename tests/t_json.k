@@ -9,6 +9,7 @@ s_empty[1];
 s_one[1];
 s_bool[1];
 s_esc[1];
+tailp[3];
 
 chk(cond, name) {
     if cond {
@@ -80,6 +81,13 @@ main() {
 
     // повторное чтение после ошибки — путь снова читается
     chk(tg_get_num(s_list, "result.1.message.chat.id") == 222, "miss->hit: chat.id == 222");
+
+    // хвост за NUL: путь лежит в буфере, за терминатором — мусор
+    // (в живом боте scratchbuf после curl-команды: "curl -s -" == 9 байт)
+    strcpy(&tailp, "result.0XXXXXXXX");
+    *(&tailp + 8) !8 0;
+    v = tg_get(s_list, &tailp);
+    chk(v != 0, "tail: путь с хвостом за NUL находит result.0");
 
     if fails[0] == 0 {
         printf("PASS\n");

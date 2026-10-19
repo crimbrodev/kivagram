@@ -364,7 +364,8 @@ tg_find(resp, path) {
             cur = 0;
             seg = seg + m + 1;
         } else if cur == 0 {
-            seg = seg + m + 1;
+            seg = seg + m;
+            if @8 *seg == 46 seg = seg + 1;
         } else {
             isnum = 1;
             i = 0;
@@ -388,7 +389,8 @@ tg_find(resp, path) {
             } else {
                 cur = tg_find_key(cur, seg, m);
             }
-            seg = seg + m + 1;
+            seg = seg + m;
+            if @8 *seg == 46 seg = seg + 1;
         }
     }
     cur;
