@@ -244,6 +244,26 @@ tg_send_text(ctx, "привет"); // business_connection_id ушёл в тел�
 (они зовут `tg_params_done`). В multipart-пути extras не сливаются —
 для mp используйте `tg_mf_*` напрямую.
 
+## Финальная волна: полнота Bot API
+
+| Модуль | Содержимое |
+|---|---|
+| `lib/tg_stickers.k` | 15 методов стикер-наборов: create/add/get/set-набор, эмодзи/ключевые слова/позиции/превью, delete*, replace, getCustomEmojiStickers |
+| `lib/tg_ephem.k` | ephemeral-сообщения 5 (включая снятие клавиатуры `markup=0` → `null`), suggested posts 2, черновики/rich 4, join-request-webapp, подписки, эмодзи-статус |
+
+Диспетчер доведён до **28/28 типов Update**: kind 0–27, каждый с
+регистрацией `tg_on_*` и аксессорами (реакции, poll_answer, бусты,
+business_connection, guest_query, paid_media payload и т.д.) — см.
+таблицу в шапке Context в `lib/tg.k`. Покрытие методов Bot API —
+**185/185** (сверка автоматическим аудитом `ref/api/methods/*.md`
+против вызовов в `lib/*.k`).
+
+Известные ограничения (осознанные):
+- webhook-сервер однопоточный и без HTTPS — за reverse-proxy;
+- сессии/kv-хранилища и FSM нет — состояние держит вызывающий;
+- `username`-параметры в некоторых обёртках — только числовые id
+  (`@username` — через `tg_call` напрямую).
+
 ## Известные языковые ловушки Kiva
 
 - `x[i]` на **локальном указателе**/параметре — value-семантика (слот
