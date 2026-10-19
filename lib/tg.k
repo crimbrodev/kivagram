@@ -615,56 +615,89 @@ tg_default_on_error(bot, method, code, desc) {
     1;
 }
 
+// ===== Compose =====
+tg_composed[2048];   // "<url>|<json>" композиции последнего вызова (16 КБ)
+tg_dry_run;          // 1 — композировать, но не отправлять (тесты/отладка)
+tg_paramslot[3];     // внутренний Params-слот обёрток
+
+// tg_compose_body(bot, method, params*|0): <url>|<json> в tg_composed;
+// возврат — указатель на начало (url до '|', тело после)
+tg_compose_body(bot, method, params) {
+    auto n;
+    auto p;
+    n = sprintf(&tg_composed, "%s/bot%s/%s", bot[1], bot[0], method);
+    *(&tg_composed + n) !8 124;   // '|' вместо NUL
+    p = &tg_composed;
+    p = p + n + 1;
+    if params == 0 {
+        *p !8 0;
+    } else {
+        strcpy(p, params);
+    }
+    &tg_composed;
+}
+
 // tg_call(bot, method, params*|0): вызов Bot API. params==0 → пустое тело.
 // 429 → on_error + sleep(retry_after), максимум 3 попытки. Возврат 1 — ok:true.
+// dry-режим: композиция готова в tg_composed, HTTP пропускается, возврат 1.
 tg_call(bot, method, params) {
     auto attempt;
     auto ok;
     auto oe;
-    auto body;
     auto code;
     auto desc;
     auto retry;
     auto url;
+    auto body;
+    auto i;
+    auto c;
     attempt = 0;
     ok = 0;
-    while attempt < 3 {
-        if params == 0 {
-            body = "";
-        } else {
-            body = params;
+    tg_compose_body(bot, method, params);
+    if tg_dry_run == 1 {
+        ok = 1;
+    }
+    if tg_dry_run == 0 {
+        // разбить композицию на месте: '|' → NUL; url — начало, body — после
+        url = &tg_composed;
+        i = 0;
+        c = @8 *url;
+        while c != 124 {
+            i = i + 1;
+            c = @8 *(url + i);
         }
-        // NOTE: tg_scratch() вынесен в локальную: вложенный вызов в аргументах
-        // рядом с индексацией параметра (bot[i]) затирает вычисленные значения
-        url = tg_scratch();
-        sprintf(url, "%s/bot%s/%s", bot[1], bot[0], method);
-        tg_http_post(url, body);
-        if tg_http_last_ok {
-            if tg_get_bool(tg_http_body(), "ok") {
-                ok = 1;
-                attempt = 3;
-            } else {
-                code = tg_get_num(tg_http_body(), "error_code");
-                desc = tg_get_str(tg_http_body(), "description");
-                if desc == 0 desc = "no description";
-                oe = bot[7];
-                oe(bot, method, code, desc);
-                if code == 429 {
-                    retry = tg_get_num(tg_http_body(), "parameters.retry_after");
-                    if retry > 0 {
-                        sleep(retry);
-                    } else {
-                        sleep(1);
-                    }
-                    attempt = attempt + 1;
-                } else {
+        *(&tg_composed + i) !8 0;
+        body = &tg_composed;
+        body = body + i + 1;
+        while attempt < 3 {
+            tg_http_post(url, body);
+            if tg_http_last_ok {
+                if tg_get_bool(tg_http_body(), "ok") {
+                    ok = 1;
                     attempt = 3;
+                } else {
+                    code = tg_get_num(tg_http_body(), "error_code");
+                    desc = tg_get_str(tg_http_body(), "description");
+                    if desc == 0 desc = "no description";
+                    oe = bot[7];
+                    oe(bot, method, code, desc);
+                    if code == 429 {
+                        retry = tg_get_num(tg_http_body(), "parameters.retry_after");
+                        if retry > 0 {
+                            sleep(retry);
+                        } else {
+                            sleep(1);
+                        }
+                        attempt = attempt + 1;
+                    } else {
+                        attempt = 3;
+                    }
                 }
+            } else {
+                oe = bot[7];
+                oe(bot, method, tg_http_curlcode, "transport error");
+                attempt = 3;
             }
-        } else {
-            oe = bot[7];
-            oe(bot, method, tg_http_curlcode, "transport error");
-            attempt = 3;
         }
     }
     ok;
@@ -1171,4 +1204,112 @@ tg_handle_update(bot, upd) {
     }
     tg_ctx_free(ctx);
     1;
+}
+
+// ===== Methods =====
+// Обёртки методов Bot API — каждая возвращает 0/1. ctx-версии берут bot/chat
+// из ctx; явные — bot первым аргументом. Всё через tg_call (dry-режим
+// композирует без отправки).
+
+// tg_send_text(ctx, text) — ответ в чат апдейта
+tg_send_text(ctx, text) {
+    auto bot;
+    auto body;
+    auto id;
+    bot = ctx[0];
+    id = ctx[3];
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", id);
+    tg_param_str(&tg_paramslot, "text", text);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "sendMessage", body);
+}
+
+// tg_send_to(bot, chat_id, text) — вне контекста, chat_id явный
+tg_send_to(bot, chat_id, text) {
+    auto body;
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", chat_id);
+    tg_param_str(&tg_paramslot, "text", text);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "sendMessage", body);
+}
+
+// tg_answer(ctx, text) — ответ на callback_query
+tg_answer(ctx, text) {
+    auto bot;
+    auto body;
+    auto id;
+    auto ok;
+    ok = 0;
+    bot = ctx[0];
+    id = ctx[13];
+    if id != 0 {
+        tg_params_reset(&tg_paramslot);
+        tg_param_str(&tg_paramslot, "callback_query_id", id);
+        tg_param_str(&tg_paramslot, "text", text);
+        body = tg_params_done(&tg_paramslot);
+        ok = tg_call(bot, "answerCallbackQuery", body);
+    }
+    ok;
+}
+
+// tg_action(ctx, action) — sendChatAction ("typing" и т.п.)
+tg_action(ctx, action) {
+    auto bot;
+    auto body;
+    auto id;
+    bot = ctx[0];
+    id = ctx[3];
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", id);
+    tg_param_str(&tg_paramslot, "action", action);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "sendChatAction", body);
+}
+
+// tg_edit_text(bot, chat_id, msg_id, text) — chat_id обязателен (иначе 400)
+tg_edit_text(bot, chat_id, msg_id, text) {
+    auto body;
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", chat_id);
+    tg_param_num(&tg_paramslot, "message_id", msg_id);
+    tg_param_str(&tg_paramslot, "text", text);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "editMessageText", body);
+}
+
+// tg_edit_inline(bot, inline_msg_id, text) — инлайн-сообщение (без chat_id)
+tg_edit_inline(bot, inline_msg_id, text) {
+    auto body;
+    auto ok;
+    ok = 0;
+    if inline_msg_id != 0 {
+        tg_params_reset(&tg_paramslot);
+        tg_param_str(&tg_paramslot, "inline_message_id", inline_msg_id);
+        tg_param_str(&tg_paramslot, "text", text);
+        body = tg_params_done(&tg_paramslot);
+        ok = tg_call(bot, "editMessageText", body);
+    }
+    ok;
+}
+
+// tg_delete(bot, chat_id, msg_id)
+tg_delete(bot, chat_id, msg_id) {
+    auto body;
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", chat_id);
+    tg_param_num(&tg_paramslot, "message_id", msg_id);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "deleteMessage", body);
+}
+
+// tg_send_photo_url(bot, chat_id, url) — фото по URL
+tg_send_photo_url(bot, chat_id, url) {
+    auto body;
+    tg_params_reset(&tg_paramslot);
+    tg_param_num(&tg_paramslot, "chat_id", chat_id);
+    tg_param_str(&tg_paramslot, "photo", url);
+    body = tg_params_done(&tg_paramslot);
+    tg_call(bot, "sendPhoto", body);
 }
