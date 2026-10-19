@@ -119,7 +119,7 @@ tg_send_document(bot, chat_id, doc, caption) {
 **Files:**
 - Modify: `build.sh:14` и `build.sh:25`
 
-- [ ] **Step 1: Заменить LIB и строку cat**
+- [x] **Step 1: Заменить LIB и строку cat**
 
 Было:
 ```sh
@@ -136,17 +136,17 @@ cat "$LIBDIR/tg.k" $MODS "$SRC" > build.k
 ```
 Комментарий в шапке обновить: «склейка lib/tg.k + lib/tg_*.k (модули, алфавит, после ядра) + исходника».
 
-- [ ] **Step 2: Проверка без модулей**
+- [x] **Step 2: Проверка без модулей**
 
 Run: `cd /tmp/opencode/kivagram && ./build.sh tests/t_methods.k /tmp/t_methods && /tmp/t_methods`
 Expected: `PASS`, exit 0 (модулей ещё нет — `MODS` пуст, поведение прежнее).
 
-- [ ] **Step 3: Проверка с фиктивным модулем**
+- [x] **Step 3: Проверка с фиктивным модулем**
 
 Run: `printf 'tg_fake_helper() { 1; }\n' > lib/tg_zzfake.k && ./build.sh tests/t_methods.k /tmp/t_methods && /tmp/t_methods; rm -f lib/tg_zzfake.k /tmp/t_methods /tmp/t_methods.ir build.k`
 Expected: `PASS` (модуль подклеился, линковка не сломалась).
 
-- [ ] **Step 4: Смоук старых тестов**
+- [x] **Step 4: Смоук старых тестов**
 
 Run: `for t in t_buf t_json t_params t_dispatch t_methods; do ./build.sh tests/$t.k /tmp/$t && /tmp/$t >/dev/null && echo "$t ok"; done`
 Expected: все `ok`.
@@ -161,7 +161,7 @@ Expected: все `ok`.
 - `tg_param_raw(b, key, val)` — как `tg_param_num`, но value уходит строкой ВЕСЬ (без кавычек и эскейпа): для дробных чисел (`latitude=55.75`), bool (`true`/`false`) и готовых литералов. Вызвать `tg_json_escape` НЕ надо.
 - `tg_html_escape(src)` — образец `tg_json_escape`: эскейпит `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;` в собственном статическом буфере (как `eb`-буфер у `tg_json_escape`), возвращает указатель на результат. Переполнение — как в образце (обрыв/игнор — согласуй с его семантикой). Комментарий: статический буфер, один активный эскейп за раз.
 
-- [ ] **Step 1: RED — тест `tests/t_v2_core.k`** (шаблон-тест сверху)
+- [x] **Step 1: RED — тест `tests/t_v2_core.k`** (шаблон-тест сверху)
 
 Случаи:
 ```k
@@ -176,10 +176,10 @@ chk(strcmp(s, "a&lt;b&gt;&c") == 0, "html: < > &");
 Run: `./build.sh tests/t_v2_core.k /tmp/t_v2_core && /tmp/t_v2_core`
 Expected: `FAIL: ...` (функций нет), exit 1.
 
-- [ ] **Step 2: Реализация в `lib/tg.k`** (после `tg_param_json` / рядом с `tg_json_escape`), повтор Step 1.
+- [x] **Step 2: Реализация в `lib/tg.k`** (после `tg_param_json` / рядом с `tg_json_escape`), повтор Step 1.
 Expected: `PASS`, exit 0.
 
-- [ ] **Step 3: Регрессия**
+- [x] **Step 3: Регрессия**
 
 Run: `for t in t_buf t_json t_params t_http t_dispatch t_methods t_poll_smoke t_v2_core; do ./build.sh tests/$t.k /tmp/$t && /tmp/$t >/dev/null && echo "$t ok" || echo "$t FAIL"; done`
 Expected: 8 × `ok`.
@@ -219,8 +219,8 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 - `allowed_updates`: слот-глобал `tg_allowed_upd[3]` (Buf) + `tg_allow_updates_add(str)`; в `tg_polling` при построении тела getUpdates — если Buf непустой, добавить параметр `allowed_updates` через `tg_param_json`. Контракт: по умолчанию НЕ передаётся (поведение v1 сохраняется).
 - Тест `tests/t_v2_dispatch.k`: минимальный — на синтетических апдейтах `{"update_id":7,"edited_message":{...}}`, `{"update_id":8,"chat_join_request":{...}}`, `{"update_id":9,"inline_query":{...}}` проверить kind (через `tg_upd_kind`), вызов своего хендлера (dry-run лог-слот как в `tests/t_dispatch.k`), аксессоры; существующие kind 1/2/3 — 3 проверки «не сломано».
 
-- [ ] RED → [ ] Реализация → [ ] GREEN: `./build.sh tests/t_v2_dispatch.k /tmp/t_d && /tmp/t_d` → PASS
-- [ ] Регрессия: `for t in t_buf t_json t_params t_http t_dispatch t_methods t_poll_smoke t_v2_core; do ...; done` → 8 ok
+- [x] RED → [ ] Реализация → [ ] GREEN: `./build.sh tests/t_v2_dispatch.k /tmp/t_d && /tmp/t_d` → PASS
+- [x] Регрессия: `for t in t_buf t_json t_params t_http t_dispatch t_methods t_poll_smoke t_v2_core; do ...; done` → 8 ok
 
 ### Task 3 (B1): медиа-1
 
@@ -238,7 +238,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 `parse_mode` не пробрасывать (нет ещё HTML-цепочки) — коммент в шапке файла: «parse_mode — через tg_sendx (lib/tg_ext.k) либо tg_call».
 
 Тест: по 2 chk на обёртку (URL `/sendAudio|` + тело `{"chat_id":55,"audio":"file-1","caption":"привет"}`), плюс кейс `caption=0 → в теле caption отсутствует`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 4 (B2): гео/стикер/контакт
 
@@ -254,7 +254,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 | `tg_send_live_photo(bot, chat_id, live_photo, photo)` | sendlivephoto | live_photo=0 → skip |
 
 Тест: тело `{"chat_id":55,"latitude":55.75,"longitude":37.62}` (КРИТИЧНО: числа без кавычек), `{"chat_id":55,"phone_number":"+7000","first_name":"A"}` при last_name=0, и т.д.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 5 (B3): альбомы/опросы/платные медиа
 
@@ -268,7 +268,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 | `tg_send_paid_media(bot, chat_id, star_count, media_json)` | sendpaidmedia | |
 
 Тест: `{"chat_id":55,"media":"..."}`? НЕТ — media через tg_param_json входит в тело БЕЗ кавычек: `{"chat_id":55,"media":[{\"type\":\"photo\"...]}`; опрос: `{"chat_id":55,"question":"чё?","options":[\"а\",\"б\"]}`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 6 (B4): пересылка/копия/правки/массовое удаление
 
@@ -288,7 +288,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 | `tg_delete_many(bot, chat_id, ids_json)` | deletemessages | |
 
 Тест: по 1-2 chk на обёртку (тела из паттерна), отдельный кейс `tg_edit_markup(bot,55,42,0)` → тело содержит `"reply_markup":null`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 7 (B5): ответы (inline/платежи/webapp/guest/join)
 
@@ -304,7 +304,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 | `tg_answer_join_request(bot, chat_id, user_id, approve)` | answerchatjoinrequestquery | params: chat_id+user_id — но .md говорит chat_join_request_query_id+result! ПРОВЕРИТЬ .md: если нужен именно query_id — подпись `tg_answer_join_request(query_id, approve)`; результат `"approve"`/`"decline"` raw-строкой |
 
 Тест: `{"callback...}` нет; тела `{"inline_query_id":"q1","results":[...]}`, `{"pre_checkout_query_id":"p1","ok":true}`, `{"guest_query_id":"g1","result":...}`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 8 (B6): клавиатуры и reply-хелперы
 
@@ -327,7 +327,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 Схема накопления — как `tg_buf_*` (Buf слот: word0=count? смотреть tg_buf_add): пользуйся `tg_buf_add` с текстовыми кусками, эскейп текста кнопки — `tg_json_escape`.
 
 Тест: `tg_kb_begin(&b); tg_kb_btn(&b,"М","greet"); tg_kb_row(&b); tg_kb_btn(&b,"Go","http://x"); s=tg_kb_done(&b);` → `{"inline_keyboard":[[{"text":"М","callback_data":"greet"}],[{"text":"Go","url":"http://x"}]]}`; remove/force_reply/reply_params/link_preview_off — по chk на каждый; kb-кнопка с кавычкой в тексте эскейпится.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 9 (B7): модерация и участники
 
@@ -336,7 +336,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 Обёртки (все `tg_adm_*` не нужны — имена методов): `tg_ban(bot, chat_id, user_id)`, `tg_unban(bot, chat_id, user_id)`, `tg_restrict(bot, chat_id, user_id, perms_json)`, `tg_promote(bot, chat_id, user_id, rights_json)` (rights=0 → только title-less базовый... .md: все опциональны — rights_json=0 ⇒ не передавать), `tg_ban_sender_chat`, `tg_unban_sender_chat`, `tg_get_chat_member(bot, chat_id, user_id)`, `tg_get_member_count(bot, chat_id)`, `tg_get_chat(bot, chat_id)`, `tg_get_admins(bot, chat_id)`, `tg_set_permissions(bot, chat_id, perms_json)`, `tg_set_member_tag(bot, chat_id, user_id, tag)`, `tg_set_admin_title(bot, chat_id, user_id, title)` = 13.
 
 Тест: по 1 chk-телу на обёртку + спецкейсы: `tg_restrict` с `perms_json` → тело `{"chat_id":55,"user_id":9,"permissions":{"can_send_messages":false}}` (внутри — НЕ кавыченная строка!).
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 10 (B8): управление чатом
 
@@ -345,7 +345,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 16 обёрток: `tg_pin(bot, chat_id, msg_id)`, `tg_unpin(bot, chat_id, msg_id)` (msg_id=0 → без него — unpin без message_id отпинивает все? .md: опционален — 0 ⇒ skip), `tg_unpin_all(bot, chat_id)`, `tg_set_title(bot, chat_id, title)`, `tg_set_description(bot, chat_id, desc)` (desc=0 → skip), `tg_set_chat_photo(bot, chat_id, file_id)`, `tg_del_chat_photo(bot, chat_id)`, `tg_set_chat_sticker_set(bot, chat_id, set_name)`, `tg_leave(bot, chat_id)`, `tg_export_invite(bot, chat_id)`, `tg_create_invite(bot, chat_id, name)` (name=0→skip), `tg_edit_invite(bot, chat_id, link, name)`, `tg_revoke_invite(bot, chat_id, link)`, `tg_approve_join(bot, chat_id, user_id)`, `tg_decline_join(bot, chat_id, user_id)`, `tg_get_chat_admins`? — уже в B7 — ИСКЛЮЧИТЬ (не дублировать), заменить на `tg_create_subscription_invite(bot, chat_id, link?...)` — свериться с .md (subscription_period/price обязательны): `tg_create_subscription_invite(bot, chat_id, period, price)`.
 
 Тест: тела по паттерну; `tg_unpin(bot,55,0)` → `{"chat_id":55}`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 11 (B9): конфиг бота и меню команд
 
@@ -354,7 +354,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 13 обёрток: `tg_set_commands(bot, commands_json)` (`tg_param_json`), `tg_get_commands(bot)`, `tg_del_commands(bot)`, `tg_set_name(bot, name)` (name=0 → skip? .md: оба опциональны — но без имени бессмысленно: name обязателен по контракту обёртки), `tg_get_name(bot)`, `tg_set_description(bot, desc)`, `tg_get_description(bot)`, `tg_set_short_description(bot, sdesc)`, `tg_get_short_description(bot)`, `tg_set_menu_button(bot, button_json)` (chat_id=0 → skip; chat_id нужен отдельной... ≤6: `(bot, chat_id, button_json)` chat_id=0→skip), `tg_get_menu_button(bot, chat_id)`, `tg_set_admin_rights(bot, rights_json, for_channels)` (0-флаги: for_channels=0/1 → raw), `tg_get_admin_rights(bot, for_channels)`.
 
 Тест: `tg_set_commands(bot, "[{\"command\":\"start\",\"description\":\"Привет\"}]")` → тело `{"commands":[{"command":"start",...}]}` (без кавычек вокруг массива!).
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 12 (B10): форум-топики
 
@@ -363,7 +363,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 13 обёрток: `tg_topic_create(bot, chat_id, name)` (icon_color=0→skip — уместить нельзя, коммент), `tg_topic_edit(bot, chat_id, thread_id, name)` (name=0→skip), `tg_topic_close(bot, chat_id, thread_id)`, `tg_topic_reopen`, `tg_topic_delete`, `tg_topic_unpin_all`, `tg_general_edit(bot, chat_id, name)`, `tg_general_close(bot, chat_id)`, `tg_general_reopen(bot, chat_id)`, `tg_general_hide(bot, chat_id)`, `tg_general_unhide(bot, chat_id)`, `tg_general_unpin_all(bot, chat_id)`, `tg_topic_icons(bot)`.
 
 Тест: тела по паттерну (`{"chat_id":55,"message_thread_id":7,"name":"топ"}` и т.д.).
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 13 (B11): реакции, геттеры, разлогин
 
@@ -372,7 +372,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 8 обёрток: `tg_set_reaction(bot, chat_id, msg_id, reaction_json)`, `tg_del_reaction(bot, chat_id, msg_id)` (user_id=0→skip), `tg_del_all_reactions(bot, chat_id)`, `tg_profile_photos(bot, user_id, limit)` (limit=0→skip), `tg_profile_audios(bot, user_id, limit)`, `tg_get_webhook_info(bot)`, `tg_logout(bot)`, `tg_close(bot)`.
 
 Тест: тела (`{"chat_id":55,"message_id":42,"reaction":[{"type":"emoji","emoji":"👍"}]}` — reaction raw через tg_param_json), у геттеров с 0 параметрами — chk только URL (`/getWebhookInfo|`) и `{}` тело.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 14 (B12): платежи
 
@@ -383,7 +383,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 `tg_refund(bot, user_id, charge_id)`, `tg_star_balance(bot)`, `tg_star_transactions(bot, limit)`, `tg_edit_star_sub(bot, user_id, charge_id, is_canceled)` (raw "true"/"false").
 
 Тест: тела `{"chat_id":55,"title":"Т","description":"Д","payload":"p","currency":"XTR","prices":[...]}` (prices raw-массив).
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 ### Task 15 (B13): расширенные отправки (6-арг магия)
 
@@ -399,7 +399,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 | `tg_sendx_to_username(bot, username, ...)` — НЕ НУЖНО (chat_id str? tg_param_str) — исключить |
 
 Тест: `tg_sendx(bot,55,"привет","HTML","{\"inline_keyboard\":[]}",0)` → тело `{"chat_id":55,"text":"привет","parse_mode":"HTML","reply_markup":{"inline_keyboard":[]}}`; `tg_answer_cb(ctx2, 0, 0)` → тело `{"callback_query_id":"cb1"}` (только id!); `tg_sendx(...,reply_to=42)` → `"reply_parameters":{"message_id":42}`.
-- [ ] RED → [ ] GREEN → [ ] отчёт
+- [x] RED → [ ] GREEN → [ ] отчёт
 
 **Gate B:** каждый субагент в отчёте показывает `PASS` своего теста + PASS старого `t_methods`. Оркестратор проверяет `git status --short` — нарушения собственности (изменённые чужие файлы) откатывает: `git checkout -- <файл>`.
 
@@ -409,7 +409,7 @@ TDD: сначала тест (RED: ./build.sh tests/<T> /tmp/<T> && /tmp/<T> →
 
 **Files:** Modify по мере необходимости ЛЮБЫХ `lib/tg_*.k` (конфликты уже невозможны — все агенты завершены), README.md, docs/superpowers/plans/2026-10-19-tg-lib-v1.md (галочки)
 
-- [ ] **Step 1: Полная сборка всех тестов**
+- [x] **Step 1: Полная сборка всех тестов**
 
 ```sh
 cd /tmp/opencode/kivagram
@@ -417,11 +417,11 @@ for t in tests/t_*.k; do n=$(basename $t .k); ./build.sh $t /tmp/$n && /tmp/$n >
 ```
 Expected: все PASS (7 старых + 15 новых). Любые FAIL (дубликаты символов, порядок определений, интероп) — фикс В файле виновника, повтор.
 
-- [ ] **Step 2: Сборка примера:** `./build.sh examples/bot.k /tmp/kivabot_ph && test -x /tmp/kivabot_ph` → OK.
+- [x] **Step 2: Сборка примера:** `./build.sh examples/bot.k /tmp/kivabot_ph && test -x /tmp/kivabot_ph` → OK.
 
-- [ ] **Step 3: Чистота:** `git status --short` — только ожидаемые новые файлы; токена нет (`grep -rn "8967819901" . || echo ok`).
+- [x] **Step 3: Чистота:** `git status --short` — только ожидаемые новые файлы; токена нет (проверять grep'ом по паттерну `[0-9]{8,10}:AA[0-9A-Za-z_-]{30}` — не вставлять сам ID/токен в документы).
 
-- [ ] **Step 4: Коммиты по модулям** (серийно, по одному на логическую группу):
+- [x] **Step 4: Коммиты по модулям** (серийно, по одному на логическую группу):
 ```sh
 git add lib/tg_media.k tests/t_v2_media.k && git commit -m "Add media send wrappers (audio/document/video/animation/voice/videoNote)"
 git add lib/tg_geo.k tests/t_v2_geo.k && git commit -m "Add geo/contact/dice/sticker wrappers with raw float params"
@@ -440,8 +440,8 @@ git add lib/tg.k tests/t_v2_dispatch.k && git commit -m "Extend dispatcher with 
 ```
 (порядок коммитов — по готовности; каждый коммит после локального прогона пары тестов виновника+соседа)
 
-- [ ] **Step 5: README** — добавить секцию «Модули v2»: таблица lib/tg_*.k → функции, конвенция «обёртка = обязательные + 0-аргументы», указание на `docs/GAP-full-api-2026-10-19.md` и что закрыто волной-1.
+- [x] **Step 5: README** — добавить секцию «Модули v2»: таблица lib/tg_*.k → функции, конвенция «обёртка = обязательные + 0-аргументы», указание на `docs/GAP-full-api-2026-10-19.md` и что закрыто волной-1.
 
-- [ ] **Step 6: Финальный прогон всей матрицы + отчёт** — все PASS, `git log --oneline -20`, `git status` чисто.
+- [x] **Step 6: Финальный прогон всей матрицы + отчёт** — все PASS, `git log --oneline -20`, `git status` чисто.
 
 **Self-review плана:** покрыты все секторы волны-1 GAP-документа (параметры — B13+A2; send-семейство — B1/B2/B3/B4; правки — B4; ответы — B5; клавиатуры — B6; админка — B7/B8; конфиг — B9; форум — B10; реакции — B11; платежи — B12; dispatch+allowed_updates — B0). Множественные вызовы-имена согласованы между задачами (B7≠B8 по `get_admins`). Плейсхолдеров нет — каждая задача содержит файлы, полный список функций, кейсы тестов с телами и команды.
