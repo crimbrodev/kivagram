@@ -1208,6 +1208,11 @@ extern strcmp
 
 tg_cur_name;   // имя текущего обрабатываемого хендлера — для встроенных фильтров
 
+// tg_router_hook — хук роутера (v4, lib/tg_router.k): указатель на функцию
+// (upd, ctx) → int. 0 — роутера нет (дефолт, прежний путь tg_on_*-хендлеров).
+// Неноль-возврат = update handled → tg_on_*-путь пропускается.
+tg_router_hook;
+
 // tg_flt_cmd(ctx): встроенный фильтр имени команды — сравнивает имя из
 // текста апдейта (после '/', до '@'/' '/конца, ASCII-lowercase) с tg_cur_name.
 // NB: tg_get возвращает raw-указатель — для строк значение начинается с
@@ -1620,7 +1625,11 @@ tg_upd_kind(upd) {
 // Ctx-слот: 0 bot*, 1 upd_raw*, 2 kind, 3 chat_id, 4 msg_id, 5 from_id,
 // 6 from_name*, 7 text*, 8 command*, 9 target_bot*, 10 mine, 11 exclusive,
 // 12 args*, 13 cbq_id*, 14 cbq_data*, 15 inline_msg_id*, 16 strbuf*,
-// 17 business_connection_id* (v2).
+// 17 business_connection_id* (v2),
+// 18 state* — строка состояния FSM (v4; заполняется в tg_handle_update
+//            вызовом tg_fsm_fill, 0 если FSM/KV не используются),
+// 19 cb_answered — 0/1: answerCallbackQuery уже отправлен (v4; ставится в
+//            tg_answer перед вызовом API — роутер использует для авто-ответа).
 // strbuf — приватный строковый буфер (~8 КБ): слово 0 = позиция байт,
 // строки копируются с offset 8 — поля ctx стабильны всю диспетчеризацию.
 //
@@ -1847,9 +1856,9 @@ tg_ctx_build(bot, upd) {
     auto t;
     auto s;
     auto pre;
-    ctx = malloc(144);   // 18 слов (v2: + слово 17 business_connection_id*)
+    ctx = malloc(160);   // 20 слов (v4: + слова 18 state*, 19 cb_answered)
     i = 0;
-    while i < 18 {
+    while i < 20 {
         *(ctx + i*8) = 0;
         i = i + 1;
     }
@@ -2050,6 +2059,10 @@ tg_boost_id(ctx) { ctx[13]; }          // kind 23/24: boost_id
 tg_boost_source(ctx) { ctx[7]; }       // kind 23/24: source.source
 tg_paid_payload(ctx) { ctx[14]; }      // kind 19: paid_media_payload
 
+// v4-аксессоры (слоты 18/19 — см. схему Context в шапке)
+tg_state(ctx) { ctx[18]; }             // FSM-состояние (0 — нет)
+tg_cb_answered(ctx) { ctx[19]; }       // answerCallbackQuery уже отправлен
+
 tg_arg(ctx, n) {
     auto a;
     auto c;
@@ -2078,30 +2091,37 @@ tg_handle_update(bot, upd) {
     auto ok;
     auto fp;
     auto r;
+    auto hr;
     ctx = tg_ctx_build(bot, upd);
     kind = ctx[2];
-    hp = bot[4];
-    n = bot[5];
-    i = 0;
-    while i < n {
-        h = hp + i * 32;
-        ok = 0;
-        if *(h + 8) == 0 ok = 1;
-        if *(h + 8) == kind ok = 1;
-        if ok {
-            tg_cur_name = *h;
-            fp = *(h + 16);
-            if fp != 0 {
-                r = fp(ctx);
-                if r == 0 ok = 0;
-            }
+    ctx[18] = tg_fsm_fill(ctx);   // v4: FSM-состояние в слот 18 (без KV → 0)
+    hr = 0;
+    fp = tg_router_hook;
+    if fp != 0 hr = fp(upd, ctx);   // v4: роутер; неноль = handled, без tg_on_*
+    if hr == 0 {
+        hp = bot[4];
+        n = bot[5];
+        i = 0;
+        while i < n {
+            h = hp + i * 32;
+            ok = 0;
+            if *(h + 8) == 0 ok = 1;
+            if *(h + 8) == kind ok = 1;
             if ok {
-                fp = *(h + 24);
-                r = fp(ctx);
-                if r == 0 i = n;
+                tg_cur_name = *h;
+                fp = *(h + 16);
+                if fp != 0 {
+                    r = fp(ctx);
+                    if r == 0 ok = 0;
+                }
+                if ok {
+                    fp = *(h + 24);
+                    r = fp(ctx);
+                    if r == 0 i = n;
+                }
             }
+            i = i + 1;
         }
-        i = i + 1;
     }
     tg_ctx_free(ctx);
     1;
@@ -2146,6 +2166,7 @@ tg_answer(ctx, text) {
     bot = ctx[0];
     id = ctx[13];
     if id != 0 {
+        ctx[19] = 1;   // v4: cb_answered — до вызова API (учёт авто-ответа роутера)
         tg_params_reset(&tg_paramslot);
         tg_param_str(&tg_paramslot, "callback_query_id", id);
         tg_param_str(&tg_paramslot, "text", text);
