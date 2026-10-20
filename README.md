@@ -286,9 +286,33 @@ tg_mw(r, &mw_logging);                    // 0 = стоп всего роуте�
 - `username`-параметры в некоторых обёртках — только числовые id
   (`@username` — через `tg_call` напрямую);
 - FSM без роутера работает напрямую (`tg_fsm_state(chat, user)` в
-  хендлере `tg_on_*`) — слот 18 контекста заполняется ядром всегда;
-- i18n, aiogram-dialogs, Redis/Mongo-бэкенды KV — вне скоупа
-  (KV-интерфейс расширяемый).
+  хендлере `tg_on_*`) — слот 18 контекста заполняется ядром всегда.
+
+## Волна v5: i18n, диалоги, сетевые бэкенды KV
+
+| Модуль | Содержимое |
+|---|---|
+| `lib/tg_i18n.k` | i18n как в aiogram-i18n: JSON-каталоги `locales/<locale>.json`, `tg_i18n_load(dir, default_locale)`, перевод `tg_i18n_get/get_l`, плейсхолдеры `tg_i18n_fmt(key, {0}, {1})`, множественное число `tg_i18n_nget` (правила ru/en), смена локали `tg_i18n_set_locale`, резолв по `language_code` `tg_i18n_from_user` + middleware-хук `tg_i18n_bind_ctx(ctx)` |
+| `lib/tg_dialog.k` | Диалоги как в aiogram-dialogs: FSM-группа = диалог, окна на состояниях, стек в FSM-data (JSON, `{"stack":[{i,s,d,dd}], "mid":…}`), intent-префикс в callback_data (кнопки старых сообщений зовут своё окно), менеджер `tg_dlg_start/switch/next/back/done/update/show/click/input`, кнопки `tg_dg_button/_go`, getter, шаблоны `{dialog_data.k}`/`{start.k}`/`{getter.k}` |
+| `lib/tg_kv_redis.k` | Redis-бэкенд KV (RESP2): кодировщик команд без подстановки (инъекция невозможна), декодер всех типов, connect/AUTH, `tg_kv_redis_get/set/del/close`. Сокеты libc |
+| `lib/tg_kv_mongo.k` | MongoDB-бэкенд KV (BSON + OP_MSG, wire-protocol): BSON-кодировщик/декодер, фрейм opcode 2013, `find/insert/delete/hello`, `tg_kv_mongo_connect/get/set/del/close`. Без SCRAM (mongod без auth) |
+
+`tg_kv_open_redis(host, port, pass)` / `tg_kv_open_mongo(host, port, db)` —
+те же `tg_kv_get/set/del`, что и у memory/sqlite: **FSM и диалоги
+работают поверх любого бэкенда без изменений**. host — IPv4-литерал
+(DNS-резолвера нет). Redis/Mongo требуют живого сервера; их
+протокольный слой (RESP-кодирование, BSON-байты) покрыт
+детерминированными unit-тестами без сети. Пример каталога i18n —
+`examples/locales/{ru,en}.json`.
+
+Ограничения (осознанные):
+- i18n: `fmt` — до двух плейсхолдеров `{0}`/`{1}`; лимиты 8 локалей / 16
+  файлов; catalog-формат — JSON (не gettext .mo/.ftl);
+- диалоги: один стек на user+chat, без многостеков/бг-задач; сложные
+  виджеты (Select/Calendar/Scroll) — не переносились;
+- Redis/Mongo: только IPv4-литерал, mongod без auth (SCRAM не
+  реализован); сетевые вызовы (`connect/get/set/del`) не покрыты
+  unit-тестами (нужен живой сервер).
 
 ## Известные языковые ловушки Kiva
 
