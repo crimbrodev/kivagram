@@ -84,6 +84,7 @@ tg_answer_cb(ctx, text, show_alert) {
     bot = ctx[0];
     id = ctx[13];
     if id != 0 {
+        ctx[19] = 1;
         tg_params_reset(&tg_paramslot);
         tg_param_str(&tg_paramslot, "callback_query_id", id);
         if text != 0 tg_param_str(&tg_paramslot, "text", text);
