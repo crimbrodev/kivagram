@@ -11,3 +11,6 @@ tests/t_*
 tg_req*
 tg_*.offset
 *.glue.k
+
+# Локальные планы волны (не коммитить)
+docs/superpowers/
