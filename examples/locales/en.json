@@ -1,0 +1,10 @@
+{
+  "hello": "Hello, {0}!",
+  "welcome": "Welcome, {0}! You are {1}.",
+  "profile-title": "Profile",
+  "apples": {
+    "one": "Apple",
+    "other": "Apples"
+  },
+  "emoji": "Tree 🎄"
+}
