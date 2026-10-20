@@ -14,6 +14,16 @@
 //   tg_kv_close() — сброс: memory освобождает цепочку, sqlite закрывает
 //     дескриптор. Вызывать и перед повторным open.
 //
+// Бэкенды-расширения (волна v5): поверх основного open есть два сетевых
+//   бэкенда с ТЕМ ЖЕ контрактом get/set/del (FSM и диалоги работают поверх
+//   любого из них без изменений):
+//   tg_kv_open_redis(host, port, password|0) — RESP-бэкенд (lib/tg_kv_redis.k);
+//     connect+AUTH, бэкенд=3. Требует живой redis-server.
+//   tg_kv_open_mongo(host, port, db|0) — BSON/OP_MSG-бэкенд (lib/tg_kv_mongo.k);
+//     бэкенд=4, db=0 → "tgkv". Требует живой mongod (без auth — SCRAM нет).
+//   host — только IPv4-литерал (DNS-резолвера нет в спайке линковки).
+//   tg_kv_close корректно закрывает и сетевые сокеты.
+//
 // Жизнь указателя (слот-кэш): указатель из tg_kv_get валиден ТОЛЬКО до
 // следующего вызова tg_kv_get / tg_kv_set / tg_kv_del / tg_kv_close —
 // после любого из них буфер может быть переиспользован. Значения копируются
@@ -47,7 +57,7 @@ extern sqlite3_errmsg
 
 tg_kv_bufptr;   // общий статик-буфер значения (0 — ещё не выделен)
 tg_kv_buflen;   // ёмкость буфера, байт
-tg_kv_backend;  // 0 = закрыто, 1 = memory, 2 = sqlite
+tg_kv_backend;  // 0 = закрыто, 1 = memory, 2 = sqlite, 3 = redis, 4 = mongo
 tg_kv_db;       // sqlite3*
 tg_kv_stmt;     // временный sqlite3_stmt* (готовится и финализируется на операцию)
 tg_kv_mhead;    // memory: голова цепочки узлов [0]=next*, [1]=key*, [2]=val*
@@ -248,6 +258,12 @@ tg_kv_close() {
             tg_kv_db = 0;
         }
     }
+    if tg_kv_backend == 3 {
+        tg_kv_redis_close();
+    }
+    if tg_kv_backend == 4 {
+        tg_kv_mongo_close();
+    }
     if tg_kv_backend == 1 {
         p = tg_kv_mhead;
         while p != 0 {
@@ -297,6 +313,32 @@ tg_kv_open(path) {
     ok;
 }
 
+// tg_kv_open_redis(host, port, password|0): RESP-бэкенд (волна v5).
+// host — IPv4-литерал; password=0 — без AUTH. 1 — ок (connect+AUTH), 0 — нет.
+tg_kv_open_redis(host, port, password) {
+    auto ok;
+    tg_kv_close();
+    ok = 0;
+    if tg_kv_redis_connect(host, port, password) == 1 {
+        tg_kv_backend = 3;
+        ok = 1;
+    }
+    ok;
+}
+
+// tg_kv_open_mongo(host, port, db|0): BSON/OP_MSG-бэкенд (волна v5).
+// db=0 → "tgkv". 1 — ок, 0 — нет (mongod без auth — SCRAM не реализован).
+tg_kv_open_mongo(host, port, db) {
+    auto ok;
+    tg_kv_close();
+    ok = 0;
+    if tg_kv_mongo_connect(host, port, db) == 1 {
+        tg_kv_backend = 4;
+        ok = 1;
+    }
+    ok;
+}
+
 // tg_kv_get(key): значение в общем буфере (слот-кэш) или 0 — ключа нет
 tg_kv_get(key) {
     auto r;
@@ -306,6 +348,12 @@ tg_kv_get(key) {
     r = 0;
     if tg_kv_backend == 1 {
         r = tg_kv_mget(key);
+    } else if tg_kv_backend == 3 {
+        tv = tg_kv_redis_get(key);
+        if tv != 0 r = tg_kv_copy(tv);
+    } else if tg_kv_backend == 4 {
+        tv = tg_kv_mongo_get(key);
+        if tv != 0 r = tg_kv_copy(tv);
     } else if tg_kv_backend == 2 {
         if tg_kv_prep("SELECT v FROM kv WHERE k = ?1") != 0 {
             sqlite3_bind_text(tg_kv_stmt, 1, key, -1, -1);
@@ -332,6 +380,10 @@ tg_kv_set(key, val) {
     ok = 1;
     if tg_kv_backend == 1 {
         ok = tg_kv_mset(key, val);
+    } else if tg_kv_backend == 3 {
+        ok = tg_kv_redis_set(key, val);
+    } else if tg_kv_backend == 4 {
+        ok = tg_kv_mongo_set(key, val);
     } else if tg_kv_backend == 2 {
         if tg_kv_prep("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)") == 0 {
             ok = 0;
@@ -362,6 +414,10 @@ tg_kv_del(key) {
     ok = 0;
     if tg_kv_backend == 1 {
         ok = tg_kv_mdel(key);
+    } else if tg_kv_backend == 3 {
+        ok = tg_kv_redis_del(key);
+    } else if tg_kv_backend == 4 {
+        ok = tg_kv_mongo_del(key);
     } else if tg_kv_backend == 2 {
         if tg_kv_prep("DELETE FROM kv WHERE k = ?1") == 0 {
             ok = 0;
