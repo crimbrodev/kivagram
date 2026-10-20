@@ -258,11 +258,37 @@ business_connection, guest_query, paid_media payload и т.д.) — см.
 **185/185** (сверка автоматическим аудитом `ref/api/methods/*.md`
 против вызовов в `lib/*.k`).
 
+## Волна v4: фреймворк-уровень (по карте aiogram)
+
+| Модуль | Содержимое |
+|---|---|
+| `lib/tg_kv.k` | KV-хранилище: memory (≤512 записей) и SQLite (параметризованные запросы, персистентность между запусками). `tg_kv_open(path\|0)/get/set/del/close` — глобальный инстанс, как storage в aiogram |
+| `lib/tg_fsm.k` | Машина состояний: состояние-строка `"Group:state"`, data — JSON. Стратегии `tg_fsm_strategy(isolated)`: global (ключ по user, дефолт как в aiogram) / isolated (chat+user). `tg_fsm_state/set/data/set_data/update_data (shallow-merge)/clear`, хелпер `tg_fsm_fill(ctx)` (зовётся ядром — слот 18 контекста всегда заполнен) |
+| `lib/tg_router.k` | Роутеры с observer'ами по kind 0–27: `tg_router_new/root`, `tg_r_on` + алиасы `tg_r_msg/tg_r_cb/tg_r_inline`, middleware `tg_mw` (стоп-семантика), propagation stop (хендлер вернул неноль), авто-ответ на callback `tg_router_autoanswer` |
+| | Фильтры: `tg_f_cmd` (+`tg_cmd_args`), `tg_f_state/any`, `tg_f_text_*`, `tg_f_from`, `tg_f_chat_type`, комбинаторы `tg_f_and/or/not`, магия-подмножество `tg_ff_text()/data()/…` + цепочки `tg_ff_eq/start/contains/in/len` |
+| `lib/tg_util.k` | KeyboardBuilder (`tg_kbu_*`: add/row/adjust/json), HTML-форматтеры `tg_fmt_*`, deep-linking с собственным SHA-256 (`tg_deep_*`), backoff `tg_backoff_delay`, chat-action-менеджер `tg_action_tick` (авто-повтор ≤4с), media-group-агрегатор `tg_mg_*` |
+
+Ядро расширено: контекст 20 слов (слот 18 — состояние FSM, слот 19 —
+callback отвечен), хук `tg_router_hook` в диспетчере: без роутера
+поведение бит-в-бит прежнее (обратная совместимость `tg_on_*`).
+
+```
+tg_kv_open("/bot.db");                    // 0 → memory
+auto r = tg_router_new("main");
+tg_router_root(r);
+tg_r_msg(r, tg_f_cmd("start"), &h_start); // h_start(ctx) → 1 = съедено
+tg_r_msg(r, tg_f_state("Form:name"), &h_name);
+tg_mw(r, &mw_logging);                    // 0 = стоп всего роутера
+```
+
 Известные ограничения (осознанные):
 - webhook-сервер однопоточный и без HTTPS — за reverse-proxy;
-- сессии/kv-хранилища и FSM нет — состояние держит вызывающий;
 - `username`-параметры в некоторых обёртках — только числовые id
-  (`@username` — через `tg_call` напрямую).
+  (`@username` — через `tg_call` напрямую);
+- FSM без роутера работает напрямую (`tg_fsm_state(chat, user)` в
+  хендлере `tg_on_*`) — слот 18 контекста заполняется ядром всегда;
+- i18n, aiogram-dialogs, Redis/Mongo-бэкенды KV — вне скоупа
+  (KV-интерфейс расширяемый).
 
 ## Известные языковые ловушки Kiva
 
